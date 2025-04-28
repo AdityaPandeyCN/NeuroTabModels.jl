@@ -41,16 +41,19 @@ dtrain = df_tot[train_idx, :];
 deval = df_tot[eval_idx, :];
 dtest = df_tot[(end-51630+1):end, :];
 
-config = NeuroTabRegressor(
-    model_type=:mlp,
-    loss=:mse,
+chain_config = NeuroTreeConfig(;
     actA=:tanh,
     init_scale=1.0,
-    nrounds=200,
     depth=4,
     ntrees=32,
     stack_size=1,
     hidden_size=1,
+)
+
+config = NeuroTabRegressor(;
+    chain_config,
+    loss=:mse,
+    nrounds=200,
     batchsize=2048,
     lr=3e-4,
 )

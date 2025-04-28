@@ -2,6 +2,7 @@ module Learners
 
 import MLJModelInterface as MMI
 import MLJModelInterface: fit, update, predict, schema
+import Random
 
 export NeuroTabRegressor, NeuroTabClassifier, LearnerTypes
 
@@ -196,13 +197,13 @@ function NeuroTabRegressor(; kwargs...)
     Float32(args[:lr]),
     Float32(args[:wd]),
     args[:batchsize],
-    Symbol(args[:actA]),
-    args[:depth],
-    args[:ntrees],
-    args[:hidden_size],
-    args[:stack_size],
-    args[:init_scale],
-    args[:MLE_tree_split],
+    Symbol(args[:actA]), # arch specific
+    args[:depth], # arch specific
+    args[:ntrees], # arch specific
+    args[:hidden_size], # arch specific
+    args[:stack_size], # arch specific
+    args[:init_scale], # arch specific
+    args[:MLE_tree_split], # arch specific
     args[:rng]
   )
 

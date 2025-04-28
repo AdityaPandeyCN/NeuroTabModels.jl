@@ -1,6 +1,6 @@
 module Metrics
 
-export metric_dict, is_maximise, eval
+export metric_dict, is_maximise
 
 import Statistics: mean, std
 import Flux: logσ, logsoftmax, softmax, relu, hardsigmoid, onehotbatch

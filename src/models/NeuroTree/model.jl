@@ -104,13 +104,6 @@ function (m::StackTree)(x::AbstractMatrix)
     end
     return p
 end
-# function (m::StackTree)(x::AbstractMatrix)
-#     p = m.trees[1](x)
-#     for i in 2:length(m.trees)
-#         p = m.trees[i](p)
-#     end
-#     return p
-# end
 
 const _act_dict = Dict(
     :identity => identity,

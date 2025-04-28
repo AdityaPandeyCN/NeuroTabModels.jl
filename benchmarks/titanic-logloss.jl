@@ -1,12 +1,13 @@
-using NeuroTabModels
 using MLDatasets
 using DataFrames
 using Statistics: mean
 using StatsBase: median
 using CategoricalArrays
 using Random
-using CUDA
 using CategoricalArrays
+# using CUDA
+using NeuroTabModels
+using NeuroTabModels: Models
 
 Random.seed!(123)
 
@@ -32,7 +33,17 @@ deval = df[setdiff(1:nrow(df), train_indices), :]
 target_name = "Survived"
 feature_names = setdiff(names(df), ["Survived"])
 
-config = NeuroTabRegressor(
+chain_config = Models.NeuroTreeConfig(;
+    actA=:relu,
+    init_scale=1.0,
+    depth=4,
+    ntrees=32,
+    stack_size=1,
+    hidden_size=1,
+)
+
+config = NeuroTabRegressor(;
+    chain_config,
     loss=:logloss,
     nrounds=400,
     depth=4,

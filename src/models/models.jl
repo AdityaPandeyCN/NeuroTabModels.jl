@@ -1,16 +1,13 @@
 module Models
 
-export NeuroTabModel, get_model_chain
+export NeuroTabModel
+export NeuroTreeConfig, MLPConfig
 
 using ..Losses
-# import ..NeuroTabModels: get_df_loader_infer
-# import ..NeuroTabModels: infer
-
-# import DataFrames: AbstractDataFrame
-# import Flux
 import Flux: @layer, Chain
 
 abstract type ArchType{T} end
+abstract type ChainConfig end
 
 """
     NeuroTabModel
@@ -22,12 +19,14 @@ struct NeuroTabModel{L<:LossType,C<:Chain}
 end
 @layer NeuroTabModel
 
-function get_model_chain(config; nfeats, outsize, kwargs...)
-    chain = get_model_chain(ArchType{config.model_type}, config; nfeats, outsize, kwargs...)
-    return chain
-end
+# function get_model_chain(config; nfeats, outsize, kwargs...)
+#     chain = get_model_chain(ArchType{config.model_type}, config; nfeats, outsize, kwargs...)
+#     return chain
+# end
 
-include("NeuroTree/neurotree.jl")
+include("NeuroTree/neurotrees.jl")
+using .NeuroTrees
 include("MLP/mlp.jl")
+using .MLP
 
 end
