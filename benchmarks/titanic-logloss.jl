@@ -33,25 +33,29 @@ deval = df[setdiff(1:nrow(df), train_indices), :]
 target_name = "Survived"
 feature_names = setdiff(names(df), ["Survived"])
 
-chain_config = Models.NeuroTreeConfig(;
-    actA=:relu,
+arch = Models.NeuroTreeConfig(;
+    actA=:identity,
     init_scale=1.0,
     depth=4,
     ntrees=32,
     stack_size=1,
     hidden_size=1,
 )
+arch = Models.MLPConfig(;
+    act=:relu,
+    stack_size=1,
+    hidden_size=64,
+)
 
-config = NeuroTabRegressor(;
-    chain_config,
+learner = NeuroTabRegressor(;
+    arch,
     loss=:logloss,
     nrounds=400,
-    depth=4,
-    lr=2e-2,
+    lr=1e-3,
 )
 
 m = NeuroTabModels.fit(
-    config,
+    learner,
     dtrain;
     deval,
     target_name,

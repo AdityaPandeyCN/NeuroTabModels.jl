@@ -14,12 +14,11 @@ using ChainRulesCore
 import ChainRulesCore: rrule
 
 import ..Losses: get_loss_type, GaussianMLE
-# import ..Models: get_model_chain, ArchType, ChainConfig
-import ..Models: ChainConfig
+import ..Models: Architecture
 
 include("model.jl")
 
-struct NeuroTreeConfig <: ChainConfig
+struct NeuroTreeConfig <: Architecture
     actA::Symbol
     depth::Int
     ntrees::Int
@@ -70,7 +69,7 @@ function NeuroTreeConfig(; kwargs...)
     return config
 end
 
-function (m::NeuroTreeConfig)(; nfeats, outsize)
+function (config::NeuroTreeConfig)(; nfeats, outsize)
 
     # if config.MLE_tree_split
     #     chain = Chain(
@@ -108,47 +107,5 @@ function (m::NeuroTreeConfig)(; nfeats, outsize)
     return chain
 end
 
-# function get_model_chain(config::NeuroTreeConfig)
-
-#     L = get_loss_type(config.loss)
-
-#     if L <: GaussianMLE && config.MLE_tree_split
-#         outsize = config.outsize
-#         chain = Chain(
-#             BatchNorm(config.nfeats),
-#             Parallel(
-#                 vcat,
-#                 StackTree(config.nfeats => outsize;
-#                     depth=config.depth,
-#                     ntrees=config.ntrees,
-#                     stack_size=config.stack_size,
-#                     hidden_size=config.hidden_size,
-#                     actA=_act_dict[config.actA],
-#                     init_scale=config.init_scale),
-#                 StackTree(config.nfeats => outsize;
-#                     depth=config.depth,
-#                     ntrees=config.ntrees,
-#                     stack_size=config.stack_size,
-#                     hidden_size=config.hidden_size,
-#                     actA=_act_dict[config.actA],
-#                     init_scale=config.init_scale)
-#             )
-#         )
-#     else
-#         outsize = L <: GaussianMLE ? 2 * config.outsize : config.outsize
-#         chain = Chain(
-#             BatchNorm(config.nfeats),
-#             StackTree(config.nfeats => outsize;
-#                 depth=config.depth,
-#                 ntrees=config.ntrees,
-#                 stack_size=config.stack_size,
-#                 hidden_size=config.hidden_size,
-#                 actA=_act_dict[config.actA],
-#                 init_scale=config.init_scale)
-#         )
-
-#     end
-#     return chain
-# end
 
 end

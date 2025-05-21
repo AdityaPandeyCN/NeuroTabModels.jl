@@ -5,6 +5,7 @@ using DataFrames
 using StatsBase
 using Statistics: mean, std
 using NeuroTabModels
+using NeuroTabModels: Models
 
 using AWS: AWSCredentials, AWSConfig, @service
 @service S3
@@ -41,7 +42,7 @@ dtrain = df_tot[train_idx, :];
 deval = df_tot[eval_idx, :];
 dtest = df_tot[(end-51630+1):end, :];
 
-chain_config = NeuroTreeConfig(;
+arch = NeuroTreeArch(;
     actA=:tanh,
     init_scale=1.0,
     depth=4,

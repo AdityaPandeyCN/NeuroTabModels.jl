@@ -4,6 +4,7 @@ import MLJModelInterface as MMI
 import MLJModelInterface: fit, update, predict, schema
 import Random
 
+using ..Models
 export NeuroTabRegressor, NeuroTabClassifier, LearnerTypes
 
 """
@@ -15,19 +16,12 @@ mk_rng(rng::Random.AbstractRNG) = rng
 mk_rng(rng::T) where {T<:Integer} = Random.MersenneTwister(rng)
 
 mutable struct NeuroTabRegressor <: MMI.Deterministic
-  model_type::Symbol
   loss::Symbol
+  arch::Architecture
   nrounds::Int
   lr::Float32
   wd::Float32
   batchsize::Int
-  actA::Symbol
-  depth::Int
-  ntrees::Int
-  hidden_size::Int
-  stack_size::Int
-  init_scale::Float32
-  MLE_tree_split::Bool
   rng::Any
 end
 
@@ -149,19 +143,12 @@ function NeuroTabRegressor(; kwargs...)
 
   # defaults arguments
   args = Dict{Symbol,Any}(
-    :model_type => :neurotree,
     :loss => :mse,
+    :arch => NeuroTreeConfig(),
     :nrounds => 100,
     :lr => 1.0f-2,
     :wd => 0.0f0,
     :batchsize => 2048,
-    :actA => :tanh,
-    :depth => 4,
-    :ntrees => 64,
-    :hidden_size => 1,
-    :stack_size => 1,
-    :init_scale => 0.1,
-    :MLE_tree_split => false,
     :rng => 123,
   )
 
@@ -180,30 +167,18 @@ function NeuroTabRegressor(; kwargs...)
     args[arg] = kwargs[arg]
   end
 
-  @info "args[:model_type]" args[:model_type]
-  args[:model_type] = Symbol(args[:model_type])
-  @info "args[:model_type]" args[:model_type]
-  args[:model_type] ∉ [:neurotree, :mlp] && error("The provided kwarg `model_type`: `$(args[:model_type])` is not supported.")
-
   args[:loss] = Symbol(args[:loss])
   args[:loss] ∉ [:mse, :mae, :logloss, :gaussian_mle, :tweedie_deviance] && error("The provided kwarg `loss`: `$(args[:loss])` is not supported.")
 
   args[:rng] = mk_rng(args[:rng])
 
   config = NeuroTabRegressor(
-    args[:model_type],
     args[:loss],
+    args[:arch],
     args[:nrounds],
     Float32(args[:lr]),
     Float32(args[:wd]),
     args[:batchsize],
-    Symbol(args[:actA]), # arch specific
-    args[:depth], # arch specific
-    args[:ntrees], # arch specific
-    args[:hidden_size], # arch specific
-    args[:stack_size], # arch specific
-    args[:init_scale], # arch specific
-    args[:MLE_tree_split], # arch specific
     args[:rng]
   )
 

@@ -1,6 +1,6 @@
 module MLP
 
-export NeuroTreeConfig
+export MLPConfig
 
 import Flux
 import Flux: @functor, trainmode!, gradient, Chain, DataLoader, cpu, gpu
@@ -8,15 +8,12 @@ import Flux: logσ, logsoftmax, softmax, softmax!, relu, sigmoid, sigmoid_fast, 
 import Flux: BatchNorm, Dense, MultiHeadAttention, Parallel, SkipConnection
 
 import ..Models: get_loss_type, GaussianMLE
-# import ..Models: get_model_chain, ArchType
-import ..Models: ChainConfig
+import ..Models: Architecture
 
-struct MLPConfig <: ChainConfig
+struct MLPConfig <: Architecture
     act::Symbol
     hidden_size::Int
     stack_size::Int
-    init_scale::Float32
-    MLE_tree_split::Bool
 end
 
 function MLPConfig(; kwargs...)
@@ -24,10 +21,8 @@ function MLPConfig(; kwargs...)
     # defaults arguments
     args = Dict{Symbol,Any}(
         :act => :relu,
-        :hidden_size => 1,
+        :hidden_size => 64,
         :stack_size => 1,
-        :init_scale => 0.1,
-        :MLE_tree_split => false,
     )
 
     args_ignored = setdiff(keys(kwargs), keys(args))
@@ -49,8 +44,6 @@ function MLPConfig(; kwargs...)
         Symbol(args[:act]),
         args[:hidden_size],
         args[:stack_size],
-        args[:init_scale],
-        args[:MLE_tree_split],
     )
 
     return config

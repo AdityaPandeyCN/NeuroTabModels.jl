@@ -45,7 +45,7 @@ function init(
     end
     dtrain = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device)
 
-    chain = get_model_chain(config; nfeats, outsize)
+    chain = config.arch(; nfeats, outsize)
     info = Dict(
         :device => device,
         :nrounds => 0,
