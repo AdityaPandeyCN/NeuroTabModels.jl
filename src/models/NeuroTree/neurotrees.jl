@@ -24,6 +24,7 @@ struct NeuroTreeConfig <: Architecture
     ntrees::Int
     hidden_size::Int
     stack_size::Int
+    scaler::Bool
     init_scale::Float32
     MLE_tree_split::Bool
 end
@@ -37,6 +38,7 @@ function NeuroTreeConfig(; kwargs...)
         :ntrees => 64,
         :hidden_size => 1,
         :stack_size => 1,
+        :scaler => true,
         :init_scale => 0.1,
         :MLE_tree_split => false,
     )
@@ -62,6 +64,7 @@ function NeuroTreeConfig(; kwargs...)
         args[:ntrees],
         args[:hidden_size],
         args[:stack_size],
+        args[:scaler],
         args[:init_scale],
         args[:MLE_tree_split],
     )
@@ -71,40 +74,43 @@ end
 
 function (config::NeuroTreeConfig)(; nfeats, outsize)
 
-    # if config.MLE_tree_split
-    #     chain = Chain(
-    #         BatchNorm(nfeats),
-    #         Parallel(
-    #             vcat,
-    #             StackTree(nfeats => outsize;
-    #                 depth=config.depth,
-    #                 ntrees=config.ntrees,
-    #                 stack_size=config.stack_size,
-    #                 hidden_size=config.hidden_size,
-    #                 actA=_act_dict[config.actA],
-    #                 init_scale=config.init_scale),
-    #             StackTree(nfeats => outsize;
-    #                 depth=config.depth,
-    #                 ntrees=config.ntrees,
-    #                 stack_size=config.stack_size,
-    #                 hidden_size=config.hidden_size,
-    #                 actA=_act_dict[config.actA],
-    #                 init_scale=config.init_scale)
-    #         )
-    #     )
-    # else
-    chain = Chain(
-        BatchNorm(nfeats),
-        StackTree(nfeats => outsize;
-            depth=config.depth,
-            ntrees=config.ntrees,
-            stack_size=config.stack_size,
-            hidden_size=config.hidden_size,
-            actA=_act_dict[config.actA],
-            init_scale=config.init_scale)
-    )
-    # end
-    return chain
+    if config.MLE_tree_split
+        chain = Chain(
+            BatchNorm(nfeats),
+            Parallel(
+                vcat,
+                StackTree(nfeats => outsize;
+                    depth=config.depth,
+                    ntrees=config.ntrees,
+                    stack_size=config.stack_size,
+                    hidden_size=config.hidden_size,
+                    actA=act_dict[config.actA],
+                    scaler=config.scaler,
+                    init_scale=config.init_scale),
+                StackTree(nfeats => outsize;
+                    depth=config.depth,
+                    ntrees=config.ntrees,
+                    stack_size=config.stack_size,
+                    hidden_size=config.hidden_size,
+                    actA=act_dict[config.actA],
+                    scaler=config.scaler,
+                    init_scale=config.init_scale)
+            )
+        )
+    else
+        chain = Chain(
+            BatchNorm(nfeats),
+            StackTree(nfeats => outsize;
+                depth=config.depth,
+                ntrees=config.ntrees,
+                stack_size=config.stack_size,
+                hidden_size=config.hidden_size,
+                actA=act_dict[config.actA],
+                scaler=config.scaler,
+                init_scale=config.init_scale)
+        )
+
+    end
 end
 
 

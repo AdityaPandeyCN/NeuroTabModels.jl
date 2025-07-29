@@ -8,6 +8,8 @@ using CategoricalArrays
 # using CUDA
 using NeuroTabModels
 using NeuroTabModels: Models
+using EvoCore.IOTools
+using OrderedCollections
 
 Random.seed!(123)
 
@@ -53,6 +55,25 @@ learner = NeuroTabRegressor(;
     nrounds=400,
     lr=1e-3,
 )
+
+
+# # TODO: move in Modeler
+# function load_hyper_list(path::String)
+#     js = load_json(path, "local")
+#     hyper_list = Vector{OrderedDict{Symbol,Any}}(js)
+#     return hyper_list
+# end
+# hyper_list = [Dict(:arch_name => "NeuroTreeConfig", :arch_config => Dict(:actA => "identity", :depth => 4), :loss => :logloss, :lr => 0.03)]
+# save_json(hyper_list, joinpath(@__DIR__, "hyper.json"), "local")
+# hyper_list = load_hyper_list(joinpath(@__DIR__, "hyper.json"))
+# hyper = hyper_list[1]
+
+# typeof(hyper[:arch_config]) <: AbstractDict
+# regressor = Models.NeuroTreeConfig
+# learner = regressor(; hyper[:arch_config]...)
+# fieldnames(regressor)
+# fieldnames(NeuroTabRegressor)
+# learner = NeuroTabRegressor(; hyper...)
 
 m = NeuroTabModels.fit(
     learner,

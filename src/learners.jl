@@ -139,12 +139,11 @@ mach = machine(m, X, y) |> fit!
 p = predict(mach, X)
 ```
 """
-function NeuroTabRegressor(; kwargs...)
+function NeuroTabRegressor(arch::Architecture=NeuroTreeConfig(); kwargs...)
 
   # defaults arguments
   args = Dict{Symbol,Any}(
     :loss => :mse,
-    :arch => NeuroTreeConfig(),
     :nrounds => 100,
     :lr => 1.0f-2,
     :wd => 0.0f0,
@@ -174,7 +173,7 @@ function NeuroTabRegressor(; kwargs...)
 
   config = NeuroTabRegressor(
     args[:loss],
-    args[:arch],
+    arch,
     args[:nrounds],
     Float32(args[:lr]),
     Float32(args[:wd]),
@@ -183,6 +182,12 @@ function NeuroTabRegressor(; kwargs...)
   )
 
   return config
+end
+
+function NeuroTabRegressor(; arch_name, arch_config::AbstractDict, kwargs...)
+  arch_type = eval(Meta.parse(arch_name))
+  arch = arch_type(; arch_config...)
+  return NeuroTabRegressor(arch; kwargs...)
 end
 
 
