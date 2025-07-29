@@ -97,18 +97,8 @@ Training function of NeuroTabModels' internal API.
 - `weight_name=nothing`
 - `offset_name=nothing`
 - `deval=nothing`           Data for tracking evaluation metric and perform early stopping.
-- `metric=nothing`: evaluation metric tracked on `deval`. Can be one of:
-    - `:mse`
-    - `:mae`
-    - `:logloss`
-    - `:mlogloss`
-    - `:gaussian_mle`
 - `print_every_n=9999`
-- `early_stopping_rounds=9999`
 - `verbosity=1`
-- `device=:cpu`: device on which to perform the computation, either `:cpu` or `:gpu`
-- `gpuID=0`: gpu device to use, only relveant if `device = :gpu` 
-
 """
 function fit(
     config::LearnerTypes,
@@ -118,38 +108,27 @@ function fit(
     weight_name=nothing,
     offset_name=nothing,
     deval=nothing,
-    metric=nothing,
     print_every_n=9999,
-    early_stopping_rounds=9999,
-    verbosity=1,
-    device=:cpu,
-    gpuID=0,
+    verbosity=1
 )
 
-    device = Symbol(device)
+    device = Symbol(config.device)
     if device == :gpu
-        CUDA.device!(gpuID)
+        CUDA.device!(config.gpuID)
     end
 
     feature_names = Symbol.(feature_names)
     target_name = Symbol(target_name)
     weight_name = isnothing(weight_name) ? nothing : Symbol(weight_name)
     offset_name = isnothing(offset_name) ? nothing : Symbol(offset_name)
-    metric = isnothing(metric) ? nothing : Symbol(metric)
 
-    m, cache = init(config, dtrain; feature_names, target_name, weight_name, offset_name, device)
+    m, cache = init(config, dtrain; feature_names, target_name, weight_name, offset_name)
 
     # initialize callback and logger if tracking eval data
-    logging_flag = !isnothing(metric) && !isnothing(deval)
-    any_flag = !isnothing(metric) || !isnothing(deval)
-    if !logging_flag && any_flag
-        @warn "For logger and eval metric to be tracked, `metric` and `deval` must both be provided."
-    end
-
     logger = nothing
-    if logging_flag
-        cb = CallBack(config, deval; metric, feature_names, target_name, weight_name, offset_name, device)
-        logger = init_logger(; metric, early_stopping_rounds)
+    if !isnothing(deval)
+        cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)
+        logger = init_logger(config)
         cb(logger, 0, m)
         (verbosity > 0) && @info "Init training" metric = logger[:metrics][end]
     else
