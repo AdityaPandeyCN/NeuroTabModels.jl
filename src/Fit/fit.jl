@@ -43,6 +43,8 @@ function init(
         target_levels = CategoricalArrays.levels(df[!, target_name])
         target_isordered = isordered(df[!, target_name])
         outsize = length(target_levels)
+    elseif L <: GaussianMLE
+        outsize = 2
     end
     dtrain = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device)
 

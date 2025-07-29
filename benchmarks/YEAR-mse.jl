@@ -1,14 +1,12 @@
-using Revise
 using Random
 using CSV
 using DataFrames
 using StatsBase
 using Statistics: mean, std
 using NeuroTabModels
-using NeuroTabModels: Models
-
 using AWS: AWSCredentials, AWSConfig, @service
 @service S3
+
 aws_creds = AWSCredentials(ENV["AWS_ACCESS_KEY_ID_JDB"], ENV["AWS_SECRET_ACCESS_KEY_JDB"])
 aws_config = AWSConfig(; creds=aws_creds, region="ca-central-1")
 
@@ -42,39 +40,42 @@ dtrain = df_tot[train_idx, :];
 deval = df_tot[eval_idx, :];
 dtest = df_tot[(end-51630+1):end, :];
 
-arch = NeuroTreeArch(;
+
+
+arch = NeuroTabModels.NeuroTreeConfig(;
     actA=:tanh,
-    init_scale=1.0,
     depth=4,
     ntrees=32,
     stack_size=1,
     hidden_size=1,
+    init_scale=0.1,
+    MLE_tree_split=true
 )
+# arch = NeuroTabModels.MLPConfig(;
+#     act=:relu,
+#     stack_size=1,
+#     hidden_size=64,
+# )
 
-config = NeuroTabRegressor(;
-    chain_config,
+learner = NeuroTabRegressor(
+    arch;
     loss=:mse,
     nrounds=200,
-    batchsize=2048,
+    early_stopping_rounds=2,
     lr=3e-4,
+    batchsize=2048,
+    device=:gpu
 )
 
-@time m = NeuroTabModels.fit(
-    config,
+m = NeuroTabModels.fit(
+    learner,
     dtrain;
     deval,
     target_name,
     feature_names,
     print_every_n=5,
-    early_stopping_rounds=2,
-    metric=:mse,
-    device=:gpu
-);
+)
 
-# nfeats = length(feature_names)
-# x = NeuroTabs.CUDA.rand(nfeats, config.batchsize);
-# m.layers[1](x)
-# m.layers[2]
 p_eval = m(deval);
 mse_eval = mean((p_eval .- deval.y_norm) .^ 2)
 @info "MSE raw - deval" mse_eval

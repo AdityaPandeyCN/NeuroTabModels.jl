@@ -75,6 +75,7 @@ end
 function (config::NeuroTreeConfig)(; nfeats, outsize)
 
     if config.MLE_tree_split
+        outsize ÷= 2
         chain = Chain(
             BatchNorm(nfeats),
             Parallel(

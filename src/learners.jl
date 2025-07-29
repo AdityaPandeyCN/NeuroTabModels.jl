@@ -17,12 +17,16 @@ mk_rng(rng::T) where {T<:Integer} = Random.MersenneTwister(rng)
 
 mutable struct NeuroTabRegressor <: MMI.Deterministic
   loss::Symbol
+  metric::Symbol
   arch::Architecture
   nrounds::Int
+  early_stopping_rounds::Int
   lr::Float32
   wd::Float32
   batchsize::Int
   rng::Any
+  device::Symbol
+  gpuID::Int
 end
 
 """
@@ -42,17 +46,9 @@ A model type for constructing a NeuroTabRegressor, based on [NeuroTabModels.jl](
 - `lr=1.0f-2`:              Learning rate. Must be > 0. A lower `eta` results in slower learning, typically requiring a higher `nrounds`.   
 - `wd=0.f0`:                Weight decay applied to the gradients by the optimizer.
 - `batchsize=2048`:         Batch size.
-- `actA=:tanh`:             Activation function applied to each of input variable for determination of split node weight. Can be one of:
-    - `:tanh`
-    - `:identity`
-- `depth=6`:            Depth of a tree. Must be >= 1. A tree of depth 1 has 2 prediction leaf nodes. A complete tree of depth N contains `2^N` terminal leaves and `2^N - 1` split nodes.
-  Compute cost is proportional to `2^depth`. Typical optimal values are in the 3 to 5 range.
-- `ntrees=64`:              Number of trees (per stack).
-- `hidden_size=16`:         Size of hidden layers. Applicable only when `stack_size` > 1.
-- `stack_size=1`:           Number of stacked NeuroTab blocks.
-- `init_scale=1.0`:         Scaling factor applied to the predictions weights. Values in the `]0, 1]` short result in best performance. 
-- `MLE_tree_split=false`:   Whether independent models are buillt for each of the 2 parameters (mu, sigma) of the the `gaussian_mle` loss.
 - `rng=123`:                Either an integer used as a seed to the random number generator or an actual random number generator (`::Random.AbstractRNG`).
+- `device=:cpu`:            Device on which to perform the computation, either `:cpu` or `:gpu`
+- `gpuID=0`:                GPU device to use, only relveant if `device = :gpu` 
 
 # Internal API
 
@@ -144,11 +140,15 @@ function NeuroTabRegressor(arch::Architecture; kwargs...)
   # defaults arguments
   args = Dict{Symbol,Any}(
     :loss => :mse,
+    :metric => nothing,
     :nrounds => 100,
+    :early_stopping_rounds => typemax(Int),
     :lr => 1.0f-2,
     :wd => 0.0f0,
     :batchsize => 2048,
     :rng => 123,
+    :device => :cpu,
+    :gpuID => 0
   )
 
   args_ignored = setdiff(keys(kwargs), keys(args))
@@ -166,19 +166,34 @@ function NeuroTabRegressor(arch::Architecture; kwargs...)
     args[arg] = kwargs[arg]
   end
 
-  args[:loss] = Symbol(args[:loss])
-  args[:loss] ∉ [:mse, :mae, :logloss, :gaussian_mle, :tweedie_deviance] && error("The provided kwarg `loss`: `$(args[:loss])` is not supported.")
+  loss = Symbol(args[:loss])
+  loss ∉ [:mse, :mae, :logloss, :tweedie, :gaussian_mle] && error("The provided kwarg `loss`: $loss is not supported.")
 
-  args[:rng] = mk_rng(args[:rng])
+  _metric_list = [:mse, :mae, :logloss, :tweedie, :gaussian_mle]
+  if isnothing(args[:metric])
+    metric = loss
+  else
+    metric = Symbol(args[:metric])
+  end
+  if metric ∉ _metric_list
+    error("Invalid metric. Must be one of: $_metric_list")
+  end
+
+  rng = mk_rng(args[:rng])
+  device = Symbol(args[:device])
 
   config = NeuroTabRegressor(
-    args[:loss],
+    loss,
+    metric,
     arch,
     args[:nrounds],
+    args[:early_stopping_rounds],
     Float32(args[:lr]),
     Float32(args[:wd]),
     args[:batchsize],
-    args[:rng]
+    rng,
+    device,
+    args[:gpuID]
   )
 
   return config

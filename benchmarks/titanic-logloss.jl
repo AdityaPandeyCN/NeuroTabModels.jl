@@ -5,11 +5,9 @@ using StatsBase: median
 using CategoricalArrays
 using Random
 using CategoricalArrays
-# using CUDA
-using NeuroTabModels
-using NeuroTabModels: Models
 using EvoCore.IOTools
 using OrderedCollections
+using NeuroTabModels
 
 Random.seed!(123)
 
@@ -35,7 +33,7 @@ deval = df[setdiff(1:nrow(df), train_indices), :]
 target_name = "Survived"
 feature_names = setdiff(names(df), ["Survived"])
 
-arch = Models.NeuroTreeConfig(;
+arch = NeuroTabModels.NeuroTreeConfig(;
     actA=:identity,
     init_scale=1.0,
     depth=4,
@@ -43,19 +41,19 @@ arch = Models.NeuroTreeConfig(;
     stack_size=1,
     hidden_size=1,
 )
-arch = Models.MLPConfig(;
-    act=:relu,
-    stack_size=1,
-    hidden_size=64,
-)
+# arch = NeuroTabModels.MLPConfig(;
+#     act=:relu,
+#     stack_size=1,
+#     hidden_size=64,
+# )
 
-learner = NeuroTabRegressor(;
-    arch,
+learner = NeuroTabRegressor(
+    arch;
     loss=:logloss,
     nrounds=400,
-    lr=1e-3,
+    early_stopping_rounds=2,
+    lr=1e-2,
 )
-
 
 # # TODO: move in Modeler
 # function load_hyper_list(path::String)
@@ -81,10 +79,7 @@ m = NeuroTabModels.fit(
     deval,
     target_name,
     feature_names,
-    metric=:logloss,
     print_every_n=10,
-    early_stopping_rounds=2,
-    device=:cpu
 )
 
 p_train = m(dtrain)
