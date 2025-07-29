@@ -8,6 +8,7 @@ using ..Models
 using ..Losses
 using ..Metrics
 
+import MLJModelInterface: fit
 import CUDA
 import Optimisers
 import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
