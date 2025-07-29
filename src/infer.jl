@@ -98,7 +98,7 @@ function infer(m::NeuroTabModel{<:GaussianMLE}, data::DL)
     return p
 end
 
-function infer(m::NeuroTabModel{L}, data::DL) where {L<:Union{TweedieDeviance}}
+function infer(m::NeuroTabModel{L}, data::DL) where {L<:Union{Tweedie}}
     preds = Vector{Float32}[]
     for x in data
         push!(preds, Vector(m(x)))
