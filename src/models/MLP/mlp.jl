@@ -64,14 +64,14 @@ function (config::MLPConfig)(; nfeats, outsize)
             Parallel(
                 vcat,
                 Chain(
-                    BatchNorm(hsize, relu),
-                    Dense(relu => hsize),
+                    BatchNorm(nfeats),
+                    Dense(nfeats => hsize),
                     BatchNorm(hsize, relu),
                     Dense(hsize => outsize)
                 ),
                 Chain(
-                    BatchNorm(hsize, relu),
-                    Dense(relu => hsize),
+                    BatchNorm(nfeats),
+                    Dense(nfeats => hsize),
                     BatchNorm(hsize, relu),
                     Dense(hsize => outsize)
                 )
@@ -82,12 +82,9 @@ function (config::MLPConfig)(; nfeats, outsize)
             BatchNorm(nfeats),
             Dense(nfeats => hsize),
             BatchNorm(hsize, relu),
-            SkipConnection(Chain(
-                    Dense(hsize => hsize),
-                    BatchNorm(hsize, relu)),
-                vcat
-            ),
-            Dense(2 * hsize => outsize)
+            Dense(hsize => hsize),
+            BatchNorm(hsize, relu),
+            Dense(hsize => outsize)
         )
     end
 
