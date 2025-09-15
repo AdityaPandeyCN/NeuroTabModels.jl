@@ -3,7 +3,7 @@ using Documenter
 using DocumenterVitepress
 using NeuroTabModels
 
-ages = [
+pages = [
     "Quick start" => "quick-start.md",
     "Design" => "design.md",
     "Models" => "models.md",
