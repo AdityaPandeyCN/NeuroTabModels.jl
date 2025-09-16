@@ -55,23 +55,21 @@ learner = NeuroTabRegressor(
     lr=1e-2,
 )
 
-# # TODO: move in Modeler
-# function load_hyper_list(path::String)
-#     js = load_json(path, "local")
-#     hyper_list = Vector{OrderedDict{Symbol,Any}}(js)
-#     return hyper_list
-# end
-# hyper_list = [Dict(:arch_name => "NeuroTreeConfig", :arch_config => Dict(:actA => "identity", :depth => 4), :loss => :logloss, :lr => 0.03)]
-# save_json(hyper_list, joinpath(@__DIR__, "hyper.json"), "local")
-# hyper_list = load_hyper_list(joinpath(@__DIR__, "hyper.json"))
-# hyper = hyper_list[1]
+learner = NeuroTabRegressor(;
+    arch_name="NeuroTreeConfig",
+    arch_config=Dict(
+        :actA => :identity,
+        :init_scale => 1.0,
+        :depth => 4,
+        :ntrees => 32,
+        :stack_size => 1,
+        :hidden_size => 1),
+    loss=:logloss,
+    nrounds=400,
+    early_stopping_rounds=2,
+    lr=1e-2,
+)
 
-# typeof(hyper[:arch_config]) <: AbstractDict
-# regressor = Models.NeuroTreeConfig
-# learner = regressor(; hyper[:arch_config]...)
-# fieldnames(regressor)
-# fieldnames(NeuroTabRegressor)
-# learner = NeuroTabRegressor(; hyper...)
 
 m = NeuroTabModels.fit(
     learner,

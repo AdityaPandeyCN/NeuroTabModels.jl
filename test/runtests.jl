@@ -1,5 +1,5 @@
 using Test
-using NeuroTreeModels
+using NeuroTabModels
 using Tables
 using DataFrames
 using Statistics: mean

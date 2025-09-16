@@ -1,8 +1,8 @@
 import { defineConfig } from 'vitepress'
 import { tabsMarkdownPlugin } from 'vitepress-plugin-tabs'
 import mathjax3 from "markdown-it-mathjax3";
-// import footnote from "markdown-it-footnote";
-// https://vitepress.dev/reference/site-config
+import footnote from "markdown-it-footnote";
+import path from 'path'
 
 function getBaseRepository(base: string): string {
   if (!base || base === '/') return '/';
