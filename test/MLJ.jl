@@ -50,7 +50,8 @@ end
     y = Y
     X = MLJBase.table(X)
 
-    tree_model = NeuroTabRegressor(max_depth=5, eta=0.05, nrounds=10)
+    tree_model = NeuroTabRegressor(; arch_name="NeuroTreeConfig")
+
     mach = machine(tree_model, X, y)
     train, test = partition(eachindex(y), 0.7, shuffle=true) # 70:30 split
     fit!(mach, rows=train, verbosity=1)
@@ -94,8 +95,8 @@ end
 @testset "MLJ - classification" begin
     X, y = @load_crabs
 
-    tree_model = NeuroTabClassifier(
-        depth=4,
+    tree_model = NeuroTabClassifier(;
+        arch_name="NeuroTreeConfig",
         lr=0.1,
         nrounds=20,
         batchsize=64
@@ -122,7 +123,7 @@ end
 @testset "MLJ - support for ordered factor predictions" begin
     X = (; x=rand(10))
     y = coerce(rand("ab", 10), OrderedFactor)
-    model = NeuroTabClassifier()
+    model = NeuroTabClassifier(; nrounds=10)
     mach = machine(model, X, y) |> fit!
     yhat = predict(mach, X)
     @assert isordered(yhat)

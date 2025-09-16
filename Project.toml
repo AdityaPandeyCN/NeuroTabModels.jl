@@ -8,7 +8,6 @@ CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
-EvoCore = "21447741-192c-46a8-9d5e-79c5661e5859"
 Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
 MLJModelInterface = "e80e1ace-859a-464e-9ed9-23947d8ae3ea"
 MLUtils = "f1d291b0-491e-4a28-83b9-f70985020b54"
@@ -21,7 +20,7 @@ cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
 
 [compat]
 CUDA = "5"
-CategoricalArrays = "0.10"
+CategoricalArrays = "0.10, 1"
 ChainRulesCore = "1"
 DataFrames = "1.3"
 Flux = "0.14, 0.15, 0.16"
@@ -34,3 +33,12 @@ StatsBase = "0.34"
 Tables = "1.9"
 cuDNN = "1"
 julia = "1.10"
+
+[extras]
+MLDatasets = "eb30cadb-4394-5ae3-aed4-317e484a6458"
+MLJBase = "a7f614a8-145f-11e9-1d2a-a57a1082229d"
+MLJTestInterface = "72560011-54dd-4dc2-94f3-c5de45b75ecd"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test", "MLDatasets", "MLJTestInterface", "MLJBase"]

@@ -1,16 +1,19 @@
 @testset "Core - internals test" begin
 
-    config = NeuroTabRegressor(
+    learner = NeuroTabRegressor(;
+        arch_name="NeuroTreeConfig",
+        arch_config=Dict(
+            :actA => :identity,
+            :init_scale => 1.0,
+            :depth => 4,
+            :ntrees => 32,
+            :stack_size => 1,
+            :hidden_size => 1),
         loss=:mse,
-        actA=:identity,
-        init_scale=1.0,
-        nrounds=200,
-        depth=4,
-        ntrees=32,
-        stack_size=1,
-        hidden_size=1,
+        nrounds=20,
+        early_stopping_rounds=2,
         batchsize=2048,
-        lr=1e-3,
+        lr=1e-2,
     )
 
     # stack tree
@@ -20,15 +23,15 @@
     feature_names = "var_" .* string.(1:nobs)
 
     outsize = 1
-    loss = NeuroTabModels.get_loss_fn(config)
-    L = NeuroTabModels.get_loss_type(config)
-    chain = NeuroTabModels.get_model_chain(L; config, nfeats, outsize)
+    loss = NeuroTabModels.Losses.get_loss_fn(learner.loss)
+    L = NeuroTabModels.Losses.get_loss_type(learner.loss)
+    chain = learner.arch(; nfeats, outsize)
     info = Dict(
-        :device => :cpu,
         :nrounds => 0,
-        :feature_names => feature_names
+        :feature_names => feature_names,
     )
     m = NeuroTabModel(L, chain, info)
+
 
 end
 
@@ -47,27 +50,29 @@ end
     dtrain = df[train_indices, :]
     deval = df[setdiff(1:nrow(df), train_indices), :]
 
-    config = NeuroTabRegressor(
+    learner = NeuroTabRegressor(;
+        arch_name="NeuroTreeConfig",
+        arch_config=Dict(
+            :depth => 3),
         loss=:mse,
         nrounds=20,
-        depth=3,
+        early_stopping_rounds=2,
         lr=1e-1,
     )
 
     m = NeuroTabModels.fit(
-        config,
+        learner,
         dtrain;
         target_name,
         feature_names
     )
 
     m = NeuroTabModels.fit(
-        config,
+        learner,
         dtrain;
         target_name,
         feature_names,
         deval,
-        metric=:mse
     )
 
 end
@@ -87,23 +92,22 @@ end
     dtrain = df[train_indices, :]
     deval = df[setdiff(1:nrow(df), train_indices), :]
 
-    config = NeuroTabClassifier(
+    learner = NeuroTabClassifier(;
+        arch_name="NeuroTreeConfig",
+        arch_config=Dict(
+            :depth => 4),
         nrounds=100,
-        depth=4,
+        batchsize=64,
+        early_stopping_rounds=10,
         lr=3e-2,
-        batchsize=64
     )
 
     m = NeuroTabModels.fit(
-        config,
+        learner,
         dtrain;
         deval,
         target_name,
         feature_names,
-        metric=:mlogloss,
-        early_stopping_rounds=10,
-        # print_every_n=10,
-        device=:cpu
     )
 
     # Predictions depend on the number of samples in the dataset
