@@ -30,7 +30,6 @@ function infer(m::NeuroTabModel, data::AbstractDataFrame; device=:cpu, gpuID=0)
     m = device == :gpu ? m |> gpu : m |> cpu
     dinfer = get_df_loader_infer(data; feature_names=m.info[:feature_names], batchsize=2048, device)
     p = infer(m, dinfer)
-    p = infer(m, dinfer)
     return p
 end
 
