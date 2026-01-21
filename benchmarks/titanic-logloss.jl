@@ -5,7 +5,6 @@ using StatsBase: median
 using CategoricalArrays
 using Random
 using CategoricalArrays
-using EvoCore.IOTools
 using OrderedCollections
 using NeuroTabModels
 
@@ -53,23 +52,23 @@ learner = NeuroTabRegressor(
     nrounds=400,
     early_stopping_rounds=2,
     lr=1e-2,
+    device=:gpu
 )
 
-learner = NeuroTabRegressor(;
-    arch_name="NeuroTreeConfig",
-    arch_config=Dict(
-        :actA => :identity,
-        :init_scale => 1.0,
-        :depth => 4,
-        :ntrees => 32,
-        :stack_size => 1,
-        :hidden_size => 1),
-    loss=:logloss,
-    nrounds=400,
-    early_stopping_rounds=2,
-    lr=1e-2,
-)
-
+# learner = NeuroTabRegressor(;
+#     arch_name="NeuroTreeConfig",
+#     arch_config=Dict(
+#         :actA => :identity,
+#         :init_scale => 1.0,
+#         :depth => 4,
+#         :ntrees => 32,
+#         :stack_size => 1,
+#         :hidden_size => 1),
+#     loss=:logloss,
+#     nrounds=400,
+#     early_stopping_rounds=2,
+#     lr=1e-2,
+# )
 
 m = NeuroTabModels.fit(
     learner,
