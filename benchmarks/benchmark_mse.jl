@@ -1,7 +1,5 @@
-using Statistics: mean, std
-using CUDA
-
 using NeuroTabModels
+using DataFrames
 using BenchmarkTools
 using Random: seed!
 
@@ -23,6 +21,7 @@ arch = NeuroTabModels.NeuroTreeConfig(;
     init_scale=1.0,
     depth=4,
     ntrees=32,
+    proj_size=1,
     stack_size=1,
     hidden_size=1,
 )
