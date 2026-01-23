@@ -1,29 +1,39 @@
 struct NeuroTree{DI,DP,M,P}
+    ntrees::Int
     d_in::DI
     d_proj::DP
-    mask::M
+    lmask::M
+    smask::M
     p::P
 end
 @layer NeuroTree trainable = (d_in, d_proj, p)
 
-function (m::NeuroTree)(x)
-    h = m.d_in(x) # [F,B] => [HNT,B]
-    h = reshape(h, size(m.d_proj.weight, 2), :) # [HNT,B] => [H,NTB]
-    nw = m.d_proj(h) # [H,NTB] => [1,NTB]
-    nw = reshape(nw, size(m.mask, 1), :) # [1,NTB] => [N,TB]
-    lw = softmax(m.mask' * nw) # [N,TB] => [L,TB]
-    lw = reshape(lw, :, size(x, 2)) # [L,TB] => [LT,B]
-    p = m.p * lw ./ size(m.mask, 2) # [LT,B] => [P,B]
-    return p
-end
 # function (m::NeuroTree)(x)
-#     nw = m.d_in(x) # [F,B] => [NT,B]
-#     nw = reshape(nw, size(m.mask, 1), :) # [NT,B] => [N,TB]
-#     lw = softmax(m.mask' * nw) # [N,TB] => [L,TB]
+#     h = m.d_in(x) # [F,B] => [HNT,B]
+#     h = reshape(h, size(m.d_proj.weight, 2), :) # [HNT,B] => [H,NTB]
+#     nw = m.d_proj(h) # [H,NTB] => [1,NTB]
+#     nw = reshape(nw, size(m.lmask, 2), :) # [1,NTB] => [N,TB]
+#     lw = exp.(m.lmask * nw .- m.smask * softplus.(nw)) # [N,TB] => [L,TB]
 #     lw = reshape(lw, :, size(x, 2)) # [L,TB] => [LT,B]
-#     p = m.p * lw ./ size(m.mask, 2) # [LT,B] => [P,B]
+#     p = m.p * lw ./ m.ntrees # [P,LT] * [LT,B] => [P,B]
 #     return p
 # end
+# function (m::NeuroTree)(x)
+#     nw = m.d_in(x) # [F,B] => [NT,B]
+#     nw = reshape(nw, size(m.lmask, 2), :) # [NT,B] => [N,TB]
+#     lw = exp.(m.lmask * nw .- m.smask * softplus.(nw)) # [N,TB] => [L,TB]
+#     lw = reshape(lw, :, size(x, 2)) # [L,TB] => [LT,B]
+#     p = m.p * lw ./ m.ntrees # [P,LT] * [LT,B] => [P,B]
+#     return p
+# end
+function (m::NeuroTree)(x)
+    nw = relu.(m.d_in(x)) # [F,B] => [NT,B]
+    nw = reshape(nw, size(m.lmask, 2), :) # [NT,B] => [N,TB]
+    lw = exp.(m.lmask * nw .- m.smask * softplus.(nw)) # [N,TB] => [L,TB]
+    lw = reshape(lw, :, size(x, 2)) # [L,TB] => [LT,B]
+    p = m.p * lw ./ m.ntrees # [P,LT] * [LT,B] => [P,B]
+    return p
+end
 
 """
     NeuroTree(; ins, outs, depth=4, ntrees=64, actA=identity, init_scale=1e-1)
@@ -32,60 +42,118 @@ end
 Initialization of a NeuroTree.
 """
 function NeuroTree(; ins, outs, tree_type=:binary, depth=4, ntrees=64, proj_size=1, actA=identity, scaler=true, init_scale=1e-1)
-    mask = get_mask(Val(tree_type), depth)
-    nnodes = size(mask, 1)
-    nleaves = size(mask, 2)
+    lmask = get_logits_mask(Val(tree_type), depth)
+    smask = get_softplus_mask(Val(tree_type), depth)
+    nnodes = size(lmask, 1)
+    nleaves = size(lmask, 2)
 
     op = NeuroTree(
+        ntrees,
         Dense(ins => proj_size * nnodes * ntrees, relu), # w
         # Dense(ins => nnodes * ntrees), # w
         Dense(proj_size => 1), # s
-        mask,
+        Float32.(lmask),
+        Float32.(smask),
         Float32.(randn(outs, nleaves * ntrees) .* init_scale), # p
     )
     return op
 end
 function NeuroTree((ins, outs)::Pair{<:Integer,<:Integer}; tree_type=:binary, depth=4, ntrees=64, proj_size=1, actA=identity, scaler=true, init_scale=1e-1)
-    mask = get_mask(Val(tree_type), depth)
-    nnodes = size(mask, 1)
-    nleaves = size(mask, 2)
+    lmask = get_logits_mask(Val(tree_type), depth)
+    smask = get_softplus_mask(Val(tree_type), depth)
+    nleaves = size(lmask, 1)
+    nnodes = size(lmask, 2)
 
     op = NeuroTree(
+        ntrees,
         Dense(ins => proj_size * nnodes * ntrees, relu), # w
         # Dense(ins => nnodes * ntrees), # w
         Dense(proj_size => 1), # s
-        mask,
+        Float32.(lmask),
+        Float32.(smask),
         Float32.(randn(outs, nleaves * ntrees) .* init_scale), # p
     )
     return op
+end
+
+
+"""
+    get_logits_mask(::Val{:binary}, depth::Integer)
+"""
+function get_logits_mask(::Val{:binary}, depth::Integer)
+    nodes = 2^depth - 1
+    leaves = 2^depth
+    mask = zeros(Bool, leaves, nodes)
+    for d in 1:depth
+        blocks = 2^(d - 1)
+        k = 2^(depth - d)
+        stride = 2 * k
+        for b in 1:blocks
+            view(mask, (b-1)*stride+1:(b-1)*stride+k, 2^(d - 1) + b - 1) .= true
+        end
+    end
+    return mask
+end
+function get_logits_mask(::Val{:oblivious}, depth::Integer)
+    leaves = 2^depth
+    mask = zeros(Bool, leaves, depth)
+    for d in 1:depth
+        blocks = 2^(d - 1)
+        k = 2^(depth - d)
+        stride = 2 * k
+        for b in 1:blocks
+            view(mask, (b-1)*stride+1:(b-1)*stride+k, d) .= true
+        end
+    end
+    return mask
+end
+
+"""
+    get_softplus_mask(::Val{:binary}, depth::Integer)
+"""
+function get_softplus_mask(::Val{:binary}, depth::Integer)
+    nodes = 2^depth - 1
+    leaves = 2^depth
+    mask = zeros(Bool, leaves, nodes)
+    for d in 1:depth
+        blocks = 2^(d - 1)
+        k = 2^(depth - d + 1)
+        stride = k
+        for b in 1:blocks
+            view(mask, (b-1)*stride+1:(b-1)*stride+k, 2^(d - 1) + b - 1) .= true
+        end
+    end
+    return mask
+end
+function get_softplus_mask(::Val{:oblivious}, depth::Integer)
+    leaves = 2^depth
+    mask = ones(Bool, leaves, depth)
+    return mask
 end
 
 function get_mask(::Val{:binary}, depth::Integer)
     nodes = 2^depth - 1
     leaves = 2^depth
     mask = zeros(Bool, nodes, leaves)
-
     for d in 1:depth
         blocks = 2^(d - 1)
         k = 2^(depth - d)
         stride = 2 * k
         for b in 1:blocks
-            view(mask, 2^(d - 1) + b - 1, (b-1)*stride+1:(b-1)*stride+k,) .= true
+            view(mask, 2^(d - 1) + b - 1, (b-1)*stride+1:(b-1)*stride+k) .= true
         end
     end
     return mask
 end
-
 function get_mask(::Val{:oblivious}, depth::Integer)
     leaves = 2^depth
     mask = zeros(Bool, depth, leaves)
-
     for d in 1:depth
         blocks = 2^(d - 1)
         k = 2^(depth - d)
         stride = 2 * k
         for b in 1:blocks
-            view(mask, d, (b-1)*stride+1:(b-1)*stride+k,) .= true
+            view(mask, d, (b-1)*stride+1:(b-1)*stride+k) .= true
         end
     end
     return mask

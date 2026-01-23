@@ -33,12 +33,14 @@ target_name = "Survived"
 feature_names = setdiff(names(df), ["Survived"])
 
 arch = NeuroTabModels.NeuroTreeConfig(;
-    actA=:identity,
+    tree_type=:binary,
+    proj_size=1,
     init_scale=1.0,
     depth=4,
-    ntrees=32,
+    ntrees=16,
     stack_size=1,
     hidden_size=1,
+    actA=:identity,
 )
 # arch = NeuroTabModels.MLPConfig(;
 #     act=:relu,
@@ -49,10 +51,10 @@ arch = NeuroTabModels.NeuroTreeConfig(;
 learner = NeuroTabRegressor(
     arch;
     loss=:logloss,
-    nrounds=400,
+    nrounds=200,
     early_stopping_rounds=2,
-    lr=1e-2,
-    device=:gpu
+    lr=3e-2,
+    device=:cpu
 )
 
 # learner = NeuroTabRegressor(;
@@ -70,14 +72,14 @@ learner = NeuroTabRegressor(
 #     lr=1e-2,
 # )
 
-m = NeuroTabModels.fit(
+@time m = NeuroTabModels.fit(
     learner,
     dtrain;
     deval,
     target_name,
     feature_names,
     print_every_n=10,
-)
+);
 
 p_train = m(dtrain)
 p_eval = m(deval)

@@ -41,38 +41,39 @@ dtrain = df_tot[train_idx, :];
 deval = df_tot[eval_idx, :];
 dtest = df_tot[(end-51630+1):end, :];
 
-# arch = NeuroTabModels.NeuroTreeConfig(;
-#     actA=:identity,
-#     depth=4,
-#     ntrees=32,
-#     stack_size=1,
-#     hidden_size=1,
-#     init_scale=0.1,
-#     MLE_tree_split=false
-# )
+arch = NeuroTabModels.NeuroTreeConfig(;
+    tree_type=:binary,
+    proj_size=4,
+    actA=:identity,
+    depth=4,
+    ntrees=32,
+    stack_size=1,
+    hidden_size=1,
+    init_scale=1.0,
+    MLE_tree_split=false
+)
 # arch = NeuroTabModels.MLPConfig(;
 #     act=:relu,
 #     stack_size=1,
 #     hidden_size=256,
 # )
-arch = NeuroTabModels.ResNetConfig(;
-    num_blocks=1,
-    hidden_size=128,
-    act=:relu,
-    dropout=0.5,
-    MLE_tree_split=false
-)
+# arch = NeuroTabModels.ResNetConfig(;
+#     num_blocks=1,
+#     hidden_size=128,
+#     act=:relu,
+#     dropout=0.5,
+#     MLE_tree_split=false
+# )
 
-device = :gpu
-# :mse :gaussian_mle :tweedie
-loss = :mse
+device = :cpu
+loss = :mse # :mse :gaussian_mle :tweedie
 
 learner = NeuroTabRegressor(
     arch;
     loss,
     nrounds=200,
     early_stopping_rounds=2,
-    lr=3e-4,
+    lr=1e-3,
     batchsize=1024,
     device
 )

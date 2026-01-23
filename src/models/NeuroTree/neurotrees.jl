@@ -10,9 +10,6 @@ import Flux: @layer, trainmode!, gradient, Chain, DataLoader, cpu, gpu
 import Flux: relu, logσ, logsoftmax, softmax, softmax!, sigmoid, sigmoid_fast, hardsigmoid, tanh, tanh_fast, hardtanh, softplus, onecold, onehotbatch
 import Flux: BatchNorm, Dense, Dropout, MultiHeadAttention, Parallel
 
-using ChainRulesCore
-import ChainRulesCore: rrule
-
 import ..Losses: get_loss_type, GaussianMLE
 import ..Models: Architecture
 
