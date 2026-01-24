@@ -17,11 +17,12 @@ dtrain.y = Y
 target_name = "y"
 
 arch = NeuroTabModels.NeuroTreeConfig(;
+    tree_type=:binary,
+    proj_size=1,
     actA=:identity,
     init_scale=1.0,
     depth=4,
     ntrees=32,
-    proj_size=1,
     stack_size=1,
     hidden_size=1,
 )
@@ -34,20 +35,22 @@ arch = NeuroTabModels.NeuroTreeConfig(;
 learner = NeuroTabRegressor(
     arch;
     loss=:mse,
-    nrounds=20,
+    nrounds=10,
     early_stopping_rounds=2,
     lr=1e-2,
+    batchsize=2048,
     device=:gpu
 )
 
-# nrounds=20: 32 sec
+# desktop gpu: 13.476383 seconds (26.42 M allocations: 5.990 GiB, 9.44% gc time)
+#  13.557744 seconds (26.40 M allocations: 5.989 GiB, 9.60% gc time)
 @time m = NeuroTabModels.fit(
     learner,
     dtrain;
     target_name,
     feature_names,
     print_every_n=10,
-)
+);
 
-# @time p_train = m(dtrain; device=:gpu)
-@time p_train = m(dtrain)
+# desktop: 0.771839 seconds (369.20 k allocations: 1.522 GiB, 5.94% gc time)
+@time p_train = m(dtrain; device=:gpu);

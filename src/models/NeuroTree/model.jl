@@ -89,7 +89,7 @@ function get_logits_mask(::Val{:binary}, depth::Integer)
         k = 2^(depth - d)
         stride = 2 * k
         for b in 1:blocks
-            view(mask, (b-1)*stride+1:(b-1)*stride+k, 2^(d - 1) + b - 1) .= true
+            view(mask, (b-1)*stride+1:(b-1)*stride+k, 2^(d - 1) + b - 1) .= 1
         end
     end
     return mask
@@ -102,7 +102,7 @@ function get_logits_mask(::Val{:oblivious}, depth::Integer)
         k = 2^(depth - d)
         stride = 2 * k
         for b in 1:blocks
-            view(mask, (b-1)*stride+1:(b-1)*stride+k, d) .= true
+            view(mask, (b-1)*stride+1:(b-1)*stride+k, d) .= 1
         end
     end
     return mask
@@ -120,7 +120,7 @@ function get_softplus_mask(::Val{:binary}, depth::Integer)
         k = 2^(depth - d + 1)
         stride = k
         for b in 1:blocks
-            view(mask, (b-1)*stride+1:(b-1)*stride+k, 2^(d - 1) + b - 1) .= true
+            view(mask, (b-1)*stride+1:(b-1)*stride+k, 2^(d - 1) + b - 1) .= 1
         end
     end
     return mask
@@ -134,13 +134,13 @@ end
 function get_mask(::Val{:binary}, depth::Integer)
     nodes = 2^depth - 1
     leaves = 2^depth
-    mask = zeros(Bool, nodes, leaves)
+    mask = zeros(Float32, nodes, leaves)
     for d in 1:depth
         blocks = 2^(d - 1)
         k = 2^(depth - d)
         stride = 2 * k
         for b in 1:blocks
-            view(mask, 2^(d - 1) + b - 1, (b-1)*stride+1:(b-1)*stride+k) .= true
+            view(mask, 2^(d - 1) + b - 1, (b-1)*stride+1:(b-1)*stride+k) .= 1
         end
     end
     return mask

@@ -4,8 +4,8 @@ using Random
 using NeuroTabModels
 using NeuroTabModels.Models.NeuroTrees
 using CUDA
+# using CairoMakie
 
-using CairoMakie
 # density(m.chain.layers[2].trees[1].b)
 # density(m.chain.layers[2].trees[1].s)
 # mean(m.chain.layers[2].trees[1].s)
@@ -106,19 +106,19 @@ function broadcast_version(nw, mask)
 end
 
 Random.seed!(123)
-tree_type = :oblivious
-depth = 2
+tree_type = :binary
+# depth = 2
 
-for (n_leaves, depth) in [(32, 5), (64, 6)]
-    println("\n=== n_leaves = $n_leaves   depth = $depth   (density ≈ 50%) ===")
-
-    nw = randn(Float32, depth, 1024)
-    nw = nw |> CuArray
+for depth in [4, 5, 6]
+    println("\n=== tree_type = $tree_type | depth = $depth ===")
 
     lmask = NeuroTrees.get_logits_mask(Val(tree_type), depth)
     # lmask = lmask |> CuArray
-    # lmask = Float32.(lmask) |> CuArray
-    lmask = BitMatrix(lmask) |> CuArray
+    lmask = Float32.(lmask) # |> CuArray
+    # lmask = BitMatrix(lmask) |> CuArray
+
+    nw = randn(Float32, size(lmask, 2), 1024)
+    # nw = nw |> CuArray
 
     # Warmup
     matmul_version(nw, lmask)
