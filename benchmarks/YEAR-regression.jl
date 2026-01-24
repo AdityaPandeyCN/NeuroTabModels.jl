@@ -1,7 +1,6 @@
 using Random
 using CSV
 using DataFrames
-using StatsBase
 using Statistics: mean, std
 using NeuroTabModels
 using AWS: AWSCredentials, AWSConfig, @service
@@ -50,6 +49,7 @@ arch = NeuroTabModels.NeuroTreeConfig(;
     stack_size=1,
     hidden_size=1,
     init_scale=1.0,
+    scaler=true,
     MLE_tree_split=false
 )
 # arch = NeuroTabModels.MLPConfig(;
@@ -65,7 +65,7 @@ arch = NeuroTabModels.NeuroTreeConfig(;
 #     MLE_tree_split=false
 # )
 
-device = :cpu
+device = :gpu
 loss = :mse # :mse :gaussian_mle :tweedie
 
 learner = NeuroTabRegressor(

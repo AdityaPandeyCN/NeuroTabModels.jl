@@ -25,6 +25,7 @@ arch = NeuroTabModels.NeuroTreeConfig(;
     ntrees=32,
     stack_size=1,
     hidden_size=1,
+    scaler=false,
 )
 # arch = NeuroTabModels.MLPConfig(;
 #     act=:relu,

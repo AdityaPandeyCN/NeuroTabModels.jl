@@ -1,35 +1,29 @@
-struct NeuroTree{DI,DP,M,P}
+struct NeuroTree{M,V,F}
+    w::M
+    b::V
+    s::V
+    p::M
+    ml::M
+    ms::M
+    actA::F
+    scaler::Bool
     ntrees::Int
-    d_in::DI
-    d_proj::DP
-    lmask::M
-    smask::M
-    p::P
 end
-@layer NeuroTree trainable = (d_in, d_proj, p)
+@layer NeuroTree trainable = (w, b, s, p)
 
-# function (m::NeuroTree)(x)
-#     h = m.d_in(x) # [F,B] => [HNT,B]
-#     h = reshape(h, size(m.d_proj.weight, 2), :) # [HNT,B] => [H,NTB]
-#     nw = m.d_proj(h) # [H,NTB] => [1,NTB]
-#     nw = reshape(nw, size(m.lmask, 2), :) # [1,NTB] => [N,TB]
-#     lw = exp.(m.lmask * nw .- m.smask * softplus.(nw)) # [N,TB] => [L,TB]
-#     lw = reshape(lw, :, size(x, 2)) # [L,TB] => [LT,B]
-#     p = m.p * lw ./ m.ntrees # [P,LT] * [LT,B] => [P,B]
-#     return p
-# end
-# function (m::NeuroTree)(x)
-#     nw = m.d_in(x) # [F,B] => [NT,B]
-#     nw = reshape(nw, size(m.lmask, 2), :) # [NT,B] => [N,TB]
-#     lw = exp.(m.lmask * nw .- m.smask * softplus.(nw)) # [N,TB] => [L,TB]
-#     lw = reshape(lw, :, size(x, 2)) # [L,TB] => [LT,B]
-#     p = m.p * lw ./ m.ntrees # [P,LT] * [LT,B] => [P,B]
-#     return p
-# end
+# h = m.d_in(x) # [F,B] => [HNT,B]
+# h = reshape(h, size(m.d_proj.weight, 2), :) # [HNT,B] => [H,NTB]
+# nw = m.d_proj(h) # [H,NTB] => [1,NTB]
+# nw = reshape(nw, size(m.lmask, 2), :) # [1,NTB] => [N,TB]
 function (m::NeuroTree)(x)
-    nw = relu.(m.d_in(x)) # [F,B] => [NT,B]
-    nw = reshape(nw, size(m.lmask, 2), :) # [NT,B] => [N,TB]
-    lw = exp.(m.lmask * nw .- m.smask * softplus.(nw)) # [N,TB] => [L,TB]
+    nw = m.w * x .+ m.b # [F,B] => [NT,B]
+    if m.scaler
+        nw = softplus.(m.s) .* (m.actA(m.w) * x .+ m.b) # [F,B] => [NT,B]
+    else
+        nw = m.actA(m.w) * x .+ m.b # [F,B] => [NT,B]
+    end
+    nw = reshape(nw, size(m.ml, 2), :) # [NT,B] => [N,TB]
+    lw = exp.(m.ml * nw .- m.ms * softplus.(nw)) # [N,TB] => [L,TB]
     lw = reshape(lw, :, size(x, 2)) # [L,TB] => [LT,B]
     p = m.p * lw ./ m.ntrees # [P,LT] * [LT,B] => [P,B]
     return p
@@ -41,37 +35,46 @@ end
 
 Initialization of a NeuroTree.
 """
-function NeuroTree(; ins, outs, tree_type=:binary, depth=4, ntrees=64, proj_size=1, actA=identity, scaler=true, init_scale=1e-1)
-    lmask = get_logits_mask(Val(tree_type), depth)
-    smask = get_softplus_mask(Val(tree_type), depth)
-    nnodes = size(lmask, 1)
-    nleaves = size(lmask, 2)
+function NeuroTree(; ins, outs, tree_type=:binary, depth=4, ntrees=64, proj_size=1, actA=identity, scaler=true, init_scale=1f0)
+    ml = get_logits_mask(Val(tree_type), depth)
+    ms = get_softplus_mask(Val(tree_type), depth)
+    nleaves = size(ml, 1)
+    nnodes = size(ml, 2)
 
     op = NeuroTree(
+        # Float32.((rand(nnodes * ntrees, ins) .- 0.5) ./ 4), # w
+        # Float32.((zeros(nnodes * ntrees) .- 0.5) ./ 4), # b
+        glorot_uniform(nnodes * ntrees, ins), # w
+        zeros(Float32, nnodes * ntrees), # b
+        Float32.(fill(log(exp(1) - 1), nnodes * ntrees)), # s
+        glorot_uniform(outs, nleaves * ntrees), # p
+        # Float32.((rand(outs, nleaves * ntrees) .- 0.5) .* sqrt(12) .* init_scale), # p
+        # Float32.(randn(outs, nleaves * ntrees) .* init_scale), # p
+        Float32.(ml),
+        Float32.(ms),
+        actA,
+        scaler,
         ntrees,
-        Dense(ins => proj_size * nnodes * ntrees, relu), # w
-        # Dense(ins => nnodes * ntrees), # w
-        Dense(proj_size => 1), # s
-        Float32.(lmask),
-        Float32.(smask),
-        Float32.(randn(outs, nleaves * ntrees) .* init_scale), # p
     )
     return op
 end
-function NeuroTree((ins, outs)::Pair{<:Integer,<:Integer}; tree_type=:binary, depth=4, ntrees=64, proj_size=1, actA=identity, scaler=true, init_scale=1e-1)
-    lmask = get_logits_mask(Val(tree_type), depth)
-    smask = get_softplus_mask(Val(tree_type), depth)
-    nleaves = size(lmask, 1)
-    nnodes = size(lmask, 2)
+function NeuroTree((ins, outs)::Pair{<:Integer,<:Integer}; tree_type=:binary, depth=4, ntrees=64, proj_size=1, actA=identity, scaler=true, init_scale=1f0)
+    ml = get_logits_mask(Val(tree_type), depth)
+    ms = get_softplus_mask(Val(tree_type), depth)
+    nleaves = size(ml, 1)
+    nnodes = size(ml, 2)
 
     op = NeuroTree(
+        Float32.((rand(nnodes * ntrees, ins) .- 0.5) ./ 4), # w
+        Float32.((rand(nnodes * ntrees) .- 0.5) ./ 4), # b
+        Float32.(fill(log(exp(1) - 1), nnodes * ntrees)), # s
+        Float32.((rand(outs, nleaves * ntrees) .- 0.5) .* sqrt(12) .* init_scale), # p
+        # Float32.(randn(outs, nleaves * ntrees) .* init_scale), # p
+        Float32.(ml),
+        Float32.(ms),
+        actA,
+        scaler,
         ntrees,
-        Dense(ins => proj_size * nnodes * ntrees, relu), # w
-        # Dense(ins => nnodes * ntrees), # w
-        Dense(proj_size => 1), # s
-        Float32.(lmask),
-        Float32.(smask),
-        Float32.(randn(outs, nleaves * ntrees) .* init_scale), # p
     )
     return op
 end
