@@ -10,6 +10,7 @@ using ..Metrics
 
 import MLJModelInterface: fit
 import CUDA, cuDNN
+import Enzyme
 import Optimisers
 import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
 import Flux: trainmode!, gradient, cpu, gpu
@@ -19,6 +20,15 @@ using CategoricalArrays
 
 include("callback.jl")
 using .CallBacks
+
+function compute_grads(ad_backend::Symbol, loss, model, batch)
+    if ad_backend == :enzyme
+        return Enzyme.gradient(Enzyme.Reverse, m -> loss(m, batch...), model)[1]
+    elseif ad_backend == :zygote
+        return gradient(m -> loss(m, batch...), model)[1]
+    end
+    error("Unsupported autodiff backend: $ad_backend. Use :enzyme or :zygote.")
+end
 
 function init(
     config::LearnerTypes,
@@ -64,10 +74,9 @@ function init(
     optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
     opts = Optimisers.setup(optim, m)
 
-    cache = (dtrain=dtrain, loss=loss, opts=opts, info=info)
+    cache = (dtrain=dtrain, loss=loss, opts=opts, info=info, ad_backend=Symbol(config.ad_backend))
     return m, cache
 end
-
 
 """
     function fit(
@@ -158,12 +167,13 @@ end
 
 function fit_iter!(m, cache)
     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
+    ad_backend = cache[:ad_backend]
     GC.gc(true)
     if typeof(cache[:dtrain]) <: CUDA.CuIterator
         CUDA.reclaim()
     end
     for d in data
-        grads = gradient(model -> loss(model, d...), m)[1]
+        grads = compute_grads(ad_backend, loss, m, d)
         Optimisers.update!(opts, m, grads)
     end
     m.info[:nrounds] += 1
@@ -171,3 +181,4 @@ function fit_iter!(m, cache)
 end
 
 end
+
