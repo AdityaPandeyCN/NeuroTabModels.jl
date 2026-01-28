@@ -18,9 +18,9 @@ end
 function (m::NeuroTree)(x)
     nw = m.w * x .+ m.b # [F,B] => [NT,B]
     if m.scaler
-        nw = softplus(m.s) .* relu.(m.actA(m.w) * x .+ m.b) # [F,B] => [NT,B]
+        nw = softplus(m.s) .* (m.actA(m.w) * x .+ m.b) # [F,B] => [NT,B]
     else
-        nw = relu.(m.actA(m.w) * x .+ m.b) # [F,B] => [NT,B]
+        nw = (m.actA(m.w) * x .+ m.b) # [F,B] => [NT,B]
     end
     nw = reshape(nw, size(m.ml, 2), :) # [NT,B] => [N,TB]
     lw = exp.(m.ml * nw .- m.ms * softplus.(nw)) # [N,TB] => [L,TB]
@@ -62,7 +62,7 @@ function NeuroTree((ins, outs)::Pair{<:Integer,<:Integer}; tree_type=:binary, de
 
     op = NeuroTree(
         Float32.((rand(nnodes * ntrees, ins) .- 0.5) ./ 4), # w
-        zeros(Float32, nnodes * ntrees), # b
+        Float32.((rand(nnodes * ntrees) .- 0.5) ./ 4), # b
         Float32.(fill(log(exp(1) - 1), nnodes * ntrees)), # s
         Float32.(randn(outs, nleaves * ntrees) .* init_scale), # p
         Float32.(ml),
