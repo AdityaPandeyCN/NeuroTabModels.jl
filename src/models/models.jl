@@ -17,6 +17,7 @@ struct NeuroTabModel{L<:LossType,C<:Chain}
     chain::C
     info::Dict{Symbol,Any}
 end
+@layer NeuroTabModel
 @functor NeuroTabModel (chain,)
 
 include("NeuroTree/neurotrees.jl")
@@ -27,3 +28,4 @@ include("ResNet/resnet.jl")
 using .ResNet
 
 end
+

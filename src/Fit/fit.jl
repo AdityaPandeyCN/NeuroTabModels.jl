@@ -11,8 +11,11 @@ using ..Metrics
 import MLJModelInterface: fit
 import CUDA, cuDNN
 import Enzyme
+import Enzyme.API
+import Enzyme: Duplicated
 import Optimisers
 import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
+import Flux
 import Flux: trainmode!, gradient, cpu, gpu
 
 using DataFrames
@@ -21,9 +24,18 @@ using CategoricalArrays
 include("callback.jl")
 using .CallBacks
 
+const _enzyme_enzyme_options_configured = Ref(false)
+
 function compute_grads(ad_backend::Symbol, loss, model, batch)
     if ad_backend == :enzyme
-        return Enzyme.gradient(Enzyme.Reverse, m -> loss(m, batch...), model)[1]
+        if !_enzyme_enzyme_options_configured[]
+            Enzyme.API.strictAliasing!(false)
+            Enzyme.API.looseTypeAnalysis!(true)
+            _enzyme_enzyme_options_configured[] = true
+        end
+        dup_model = Duplicated(model)
+        Flux.gradient(m -> loss(m, batch...), dup_model)
+        return dup_model.dval
     elseif ad_backend == :zygote
         return gradient(m -> loss(m, batch...), model)[1]
     end
