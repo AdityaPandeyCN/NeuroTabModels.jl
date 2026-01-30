@@ -17,7 +17,6 @@ mutable struct NeuroTabRegressor <: MMI.Deterministic
   wd::Float32
   batchsize::Int
   seed::Int
-  ad_backend::Symbol
   device::Symbol
   gpuID::Int
 end
@@ -41,7 +40,6 @@ A model type for constructing a NeuroTabRegressor, based on [NeuroTabModels.jl](
 - `wd=0.f0`:                Weight decay applied to the gradients by the optimizer.
 - `batchsize=2048`:         Batch size.
 - `seed=123`:               An integer used as a seed to the random number generator.
-- `ad_backend=:enzyme`:     AD backend to use. One of `:enzyme` or `:zygote`.
 - `device=:cpu`:            Device on which to perform the computation, either `:cpu` or `:gpu`
 - `gpuID=0`:                GPU device to use, only relveant if `device = :gpu` 
 
@@ -142,7 +140,6 @@ function NeuroTabRegressor(arch::Architecture; kwargs...)
     :wd => 0.0f0,
     :batchsize => 2048,
     :seed => 123,
-    :ad_backend => :enzyme,
     :device => :cpu,
     :gpuID => 0
   )
@@ -175,9 +172,6 @@ function NeuroTabRegressor(arch::Architecture; kwargs...)
     error("Invalid metric. Must be one of: $_metric_list")
   end
 
-  ad_backend = Symbol(args[:ad_backend])
-  ad_backend ∉ [:enzyme, :zygote] && error("Invalid `ad_backend`. Must be one of: [:enzyme, :zygote].")
-
   device = Symbol(args[:device])
 
   config = NeuroTabRegressor(
@@ -190,7 +184,6 @@ function NeuroTabRegressor(arch::Architecture; kwargs...)
     Float32(args[:wd]),
     args[:batchsize],
     args[:seed],
-    ad_backend,
     device,
     args[:gpuID]
   )
@@ -204,6 +197,7 @@ function NeuroTabRegressor(; arch_name="NeuroTreeConfig", arch_config::AbstractD
   return NeuroTabRegressor(arch; kwargs...)
 end
 
+
 mutable struct NeuroTabClassifier <: MMI.Probabilistic
   loss::Symbol
   metric::Symbol
@@ -214,7 +208,6 @@ mutable struct NeuroTabClassifier <: MMI.Probabilistic
   wd::Float32
   batchsize::Int
   seed::Int
-  ad_backend::Symbol
   device::Symbol
   gpuID::Int
 end
@@ -232,7 +225,6 @@ A model type for constructing a NeuroTabClassifier, based on [NeuroTabModels.jl]
 - `wd=0.f0`:                Weight decay applied to the gradients by the optimizer.
 - `batchsize=2048`:         Batch size.
 - `seed=123`:               An integer used as a seed to the random number generator.
-- `ad_backend=:enzyme`:     AD backend to use. One of `:enzyme` or `:zygote`.
 - `device=:cpu`:            Device on which to perform the computation, either `:cpu` or `:gpu`
 - `gpuID=0`:                GPU device to use, only relveant if `device = :gpu` 
 
@@ -332,7 +324,6 @@ function NeuroTabClassifier(arch::Architecture; kwargs...)
     :wd => 0.0f0,
     :batchsize => 2048,
     :seed => 123,
-    :ad_backend => :enzyme,
     :device => :cpu,
     :gpuID => 0
   )
@@ -352,9 +343,6 @@ function NeuroTabClassifier(arch::Architecture; kwargs...)
     args[arg] = kwargs[arg]
   end
 
-  ad_backend = Symbol(args[:ad_backend])
-  ad_backend ∉ [:enzyme, :zygote] && error("Invalid `ad_backend`. Must be one of: [:enzyme, :zygote].")
-
   device = Symbol(args[:device])
 
   config = NeuroTabClassifier(
@@ -367,7 +355,6 @@ function NeuroTabClassifier(arch::Architecture; kwargs...)
     Float32(args[:wd]),
     args[:batchsize],
     args[:seed],
-    ad_backend,
     device,
     args[:gpuID]
   )
@@ -384,4 +371,3 @@ end
 const LearnerTypes = Union{NeuroTabRegressor,NeuroTabClassifier}
 
 end
-
