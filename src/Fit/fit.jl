@@ -165,33 +165,15 @@ function fit(
 end
 
 function compute_grads(loss, model, d::Tuple)
-    # Update BatchNorm running stats in train mode (outside autodiff)
     trainmode!(model)
     model(d[1])
-
-    # Switch to test mode for gradient computation (avoids mutation issues)
     testmode!(model)
 
-    # Create shadow model for gradient accumulation
     dmodel = Enzyme.make_zero(model)
-
-    # Use runtime activity mode to handle dynamic allocations in BatchNorm
     ad = Enzyme.set_runtime_activity(Reverse)
-
-    # Dispatch based on batch tuple size
-    if length(d) == 2
-        x, y = d
-        Enzyme.autodiff(ad, Const(loss), Active, Duplicated(model, dmodel), Const(x), Const(y))
-    elseif length(d) == 3
-        x, y, w = d
-        Enzyme.autodiff(ad, Const(loss), Active, Duplicated(model, dmodel), Const(x), Const(y), Const(w))
-    elseif length(d) == 4
-        x, y, w, o = d
-        Enzyme.autodiff(ad, Const(loss), Active, Duplicated(model, dmodel), Const(x), Const(y), Const(w), Const(o))
-    else
-        error("Unexpected batch tuple length: $(length(d))")
-    end
-
+    
+    Enzyme.autodiff(ad, Const(loss), Active, Duplicated(model, dmodel), Const.(d)...)
+    
     return dmodel
 end
 
