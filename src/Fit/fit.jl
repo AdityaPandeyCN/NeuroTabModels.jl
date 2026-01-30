@@ -11,12 +11,10 @@ using ..Metrics
 import MLJModelInterface: fit
 import CUDA, cuDNN
 import Enzyme
-import Enzyme.API
-import Enzyme: Duplicated
+import Enzyme: Duplicated, Active, Const, Reverse
 import Optimisers
 import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
-import Flux
-import Flux: trainmode!, gradient, cpu, gpu
+import Flux: trainmode!, testmode!, cpu, gpu
 
 using DataFrames
 using CategoricalArrays
@@ -24,22 +22,9 @@ using CategoricalArrays
 include("callback.jl")
 using .CallBacks
 
-const _enzyme_enzyme_options_configured = Ref(false)
-
-function compute_grads(ad_backend::Symbol, loss, model, batch)
-    if ad_backend == :enzyme
-        if !_enzyme_enzyme_options_configured[]
-            Enzyme.API.strictAliasing!(false)
-            Enzyme.API.looseTypeAnalysis!(true)
-            _enzyme_enzyme_options_configured[] = true
-        end
-        dup_model = Duplicated(model)
-        Flux.gradient(m -> loss(m, batch...), dup_model)
-        return dup_model.dval
-    elseif ad_backend == :zygote
-        return gradient(m -> loss(m, batch...), model)[1]
-    end
-    error("Unsupported autodiff backend: $ad_backend. Use :enzyme or :zygote.")
+# Configure Enzyme once at module load
+function __init__()
+    Enzyme.API.strictAliasing!(false)
 end
 
 function init(
@@ -83,46 +68,18 @@ function init(
         m = m |> gpu
     end
 
-    optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
+    optim = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
     opts = Optimisers.setup(optim, m)
 
-    cache = (dtrain=dtrain, loss=loss, opts=opts, info=info, ad_backend=Symbol(config.ad_backend))
+    cache = (dtrain=dtrain, loss=loss, opts=opts, info=info)
     return m, cache
 end
 
+
 """
-    function fit(
-        config::NeuroTypes,
-        dtrain;
-        feature_names,
-        target_name,
-        weight_name=nothing,
-        offset_name=nothing,
-        deval=nothing,
-        metric=nothing,
-        print_every_n=9999,
-        early_stopping_rounds=9999,
-        verbosity=1,
-        device=:cpu,
-        gpuID=0,
-    )
+    function fit(...)
 
 Training function of NeuroTabModels' internal API.
-
-# Arguments
-
-- `config::LearnerTypes`
-- `dtrain`: Must be `<:AbstractDataFrame`  
-
-# Keyword arguments
-
-- `feature_names`:          Required kwarg, a `Vector{Symbol}` or `Vector{String}` of the feature names.
-- `target_name`             Required kwarg, a `Symbol` or `String` indicating the name of the target variable.  
-- `weight_name=nothing`
-- `offset_name=nothing`
-- `deval=nothing`           Data for tracking evaluation metric and perform early stopping.
-- `print_every_n=9999`
-- `verbosity=1`
 """
 function fit(
     config::LearnerTypes,
@@ -153,17 +110,18 @@ function fit(
     if !isnothing(deval)
         cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)
         logger = init_logger(config)
+        testmode!(m)
         cb(logger, 0, m)
         (verbosity > 0) && @info "Init training" metric = logger[:metrics][end]
     else
         (verbosity > 0) && @info "Init training"
     end
 
-    # for iter = 1:config.nrounds
     while m.info[:nrounds] < config.nrounds
         fit_iter!(m, cache)
         iter = m.info[:nrounds]
         if !isnothing(logger)
+            testmode!(m)
             cb(logger, iter, m)
             if verbosity > 0 && iter % print_every_n == 0
                 @info "iter $iter" metric = logger[:metrics][:metric][end]
@@ -174,23 +132,57 @@ function fit(
 
     m.info[:logger] = logger
     return m
-    # return m |> cpu
+end
+
+# Enzyme-based gradient computation
+# Uses runtime activity mode to handle BatchNorm's dynamic allocations
+function compute_grads(loss, model, d::Tuple)
+    # Update BatchNorm running stats in train mode (outside autodiff)
+    trainmode!(model)
+    model(d[1])
+    
+    # Switch to test mode for gradient computation (avoids mutation issues)
+    testmode!(model)
+    
+    # Create shadow model for gradient accumulation
+    dmodel = Enzyme.make_zero(model)
+    
+    # Use runtime activity mode to handle dynamic allocations in BatchNorm
+    ad = Enzyme.set_runtime_activity(Reverse)
+    
+    # Dispatch based on batch tuple size
+    if length(d) == 2
+        x, y = d
+        Enzyme.autodiff(ad, Const(loss), Active, Duplicated(model, dmodel), Const(x), Const(y))
+    elseif length(d) == 3
+        x, y, w = d
+        Enzyme.autodiff(ad, Const(loss), Active, Duplicated(model, dmodel), Const(x), Const(y), Const(w))
+    elseif length(d) == 4
+        x, y, w, o = d
+        Enzyme.autodiff(ad, Const(loss), Active, Duplicated(model, dmodel), Const(x), Const(y), Const(w), Const(o))
+    else
+        error("Unexpected batch tuple length: $(length(d))")
+    end
+    
+    return dmodel
 end
 
 function fit_iter!(m, cache)
     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-    ad_backend = cache[:ad_backend]
+    
+    # Memory cleanup
     GC.gc(true)
     if typeof(cache[:dtrain]) <: CUDA.CuIterator
         CUDA.reclaim()
     end
+    
     for d in data
-        grads = compute_grads(ad_backend, loss, m, d)
+        grads = compute_grads(loss, m, d)
         Optimisers.update!(opts, m, grads)
     end
+    
     m.info[:nrounds] += 1
     return nothing
 end
 
 end
-
