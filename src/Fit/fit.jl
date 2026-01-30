@@ -10,15 +10,21 @@ using ..Metrics
 
 import MLJModelInterface: fit
 import CUDA, cuDNN
+import Enzyme
+import Enzyme: Duplicated, Active, Const, Reverse
 import Optimisers
 import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
-import Flux: trainmode!, gradient, cpu, gpu
+import Flux: trainmode!, testmode!, cpu, gpu
 
 using DataFrames
 using CategoricalArrays
 
 include("callback.jl")
 using .CallBacks
+
+function __init__()
+    Enzyme.API.strictAliasing!(false)
+end
 
 function init(
     config::LearnerTypes,
@@ -132,6 +138,7 @@ function fit(
     if !isnothing(deval)
         cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)
         logger = init_logger(config)
+        testmode!(m)
         cb(logger, 0, m)
         (verbosity > 0) && @info "Init training" metric = logger[:metrics][end]
     else
@@ -143,6 +150,7 @@ function fit(
         fit_iter!(m, cache)
         iter = m.info[:nrounds]
         if !isnothing(logger)
+            testmode!(m)
             cb(logger, iter, m)
             if verbosity > 0 && iter % print_every_n == 0
                 @info "iter $iter" metric = logger[:metrics][:metric][end]
@@ -156,6 +164,19 @@ function fit(
     # return m |> cpu
 end
 
+function compute_grads(loss, model, d::Tuple)
+    trainmode!(model)
+    model(d[1])
+    testmode!(model)
+
+    dmodel = Enzyme.make_zero(model)
+    ad = Enzyme.set_runtime_activity(Reverse)
+    
+    Enzyme.autodiff(ad, Const(loss), Active, Duplicated(model, dmodel), Const.(d)...)
+    
+    return dmodel
+end
+
 function fit_iter!(m, cache)
     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
     GC.gc(true)
@@ -163,7 +184,7 @@ function fit_iter!(m, cache)
         CUDA.reclaim()
     end
     for d in data
-        grads = gradient(model -> loss(model, d...), m)[1]
+        grads = compute_grads(loss, m, d)
         Optimisers.update!(opts, m, grads)
     end
     m.info[:nrounds] += 1
