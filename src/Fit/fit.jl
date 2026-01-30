@@ -22,7 +22,6 @@ using CategoricalArrays
 include("callback.jl")
 using .CallBacks
 
-# Configure Enzyme once at module load
 function __init__()
     Enzyme.API.strictAliasing!(false)
 end
@@ -77,9 +76,38 @@ end
 
 
 """
-    function fit(...)
+    function fit(
+        config::NeuroTypes,
+        dtrain;
+        feature_names,
+        target_name,
+        weight_name=nothing,
+        offset_name=nothing,
+        deval=nothing,
+        metric=nothing,
+        print_every_n=9999,
+        early_stopping_rounds=9999,
+        verbosity=1,
+        device=:cpu,
+        gpuID=0,
+    )
 
 Training function of NeuroTabModels' internal API.
+
+# Arguments
+
+- `config::LearnerTypes`
+- `dtrain`: Must be `<:AbstractDataFrame`  
+
+# Keyword arguments
+
+- `feature_names`:          Required kwarg, a `Vector{Symbol}` or `Vector{String}` of the feature names.
+- `target_name`             Required kwarg, a `Symbol` or `String` indicating the name of the target variable.  
+- `weight_name=nothing`
+- `offset_name=nothing`
+- `deval=nothing`           Data for tracking evaluation metric and perform early stopping.
+- `print_every_n=9999`
+- `verbosity=1`
 """
 function fit(
     config::LearnerTypes,
@@ -117,6 +145,7 @@ function fit(
         (verbosity > 0) && @info "Init training"
     end
 
+    # for iter = 1:config.nrounds
     while m.info[:nrounds] < config.nrounds
         fit_iter!(m, cache)
         iter = m.info[:nrounds]
@@ -132,24 +161,23 @@ function fit(
 
     m.info[:logger] = logger
     return m
+    # return m |> cpu
 end
 
-# Enzyme-based gradient computation
-# Uses runtime activity mode to handle BatchNorm's dynamic allocations
 function compute_grads(loss, model, d::Tuple)
     # Update BatchNorm running stats in train mode (outside autodiff)
     trainmode!(model)
     model(d[1])
-    
+
     # Switch to test mode for gradient computation (avoids mutation issues)
     testmode!(model)
-    
+
     # Create shadow model for gradient accumulation
     dmodel = Enzyme.make_zero(model)
-    
+
     # Use runtime activity mode to handle dynamic allocations in BatchNorm
     ad = Enzyme.set_runtime_activity(Reverse)
-    
+
     # Dispatch based on batch tuple size
     if length(d) == 2
         x, y = d
@@ -163,24 +191,20 @@ function compute_grads(loss, model, d::Tuple)
     else
         error("Unexpected batch tuple length: $(length(d))")
     end
-    
+
     return dmodel
 end
 
 function fit_iter!(m, cache)
     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-    
-    # Memory cleanup
     GC.gc(true)
     if typeof(cache[:dtrain]) <: CUDA.CuIterator
         CUDA.reclaim()
     end
-    
     for d in data
         grads = compute_grads(loss, m, d)
         Optimisers.update!(opts, m, grads)
     end
-    
     m.info[:nrounds] += 1
     return nothing
 end
