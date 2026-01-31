@@ -96,7 +96,7 @@ end
         arch_name="NeuroTreeConfig",
         arch_config=Dict(
             :depth => 4),
-        nrounds=200,
+        nrounds=100,
         batchsize=64,
         early_stopping_rounds=10,
         lr=3e-2,
