@@ -67,7 +67,6 @@ function init(
 
     optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
     opts = Optimisers.setup(optim, m)
-
     cache = (dtrain=dtrain, loss=loss, opts=opts, info=info)
     return m, cache
 end
@@ -138,7 +137,6 @@ function fit(
 
     while m.info[:nrounds] < config.nrounds
         fit_iter!(m, cache)
-        m.info[:nrounds] += 1
         iter = m.info[:nrounds]
         if !isnothing(logger)
             cb(logger, iter, m)
@@ -160,6 +158,7 @@ function fit_iter!(m, cache)
         grads = Enzyme.gradient(set_runtime_activity(Reverse), (m, args...) -> loss(m, args...), m, const_args...)
         Optimisers.update!(opts, m, grads[1])
     end
+    m.info[:nrounds] += 1
     return nothing
 end
 # function fit_iter!(m, cache)
