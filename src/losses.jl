@@ -69,37 +69,20 @@ function tweedie(m, x, y, w, offset)
     ) / sum(w)
 end
 
-function _mlogloss_from_logprobs(p, y)
-    n = length(y)
-    acc = zero(eltype(p))
-    @inbounds for i in 1:n
-        acc -= p[Int(y[i]), i]
-    end
-    return acc / n
-end
-
-function _mlogloss_from_logprobs(p, y, w)
-    acc = zero(eltype(p))
-    wsum = zero(eltype(w))
-    @inbounds for i in 1:length(y)
-        wi = w[i]
-        wsum += wi
-        acc -= p[Int(y[i]), i] * wi
-    end
-    return acc / wsum
-end
-
 function mlogloss(m, x, y)
     p = logsoftmax(m(x); dims=1)
-    return _mlogloss_from_logprobs(p, y)
+    k = size(p, 1)
+    mean(-sum(onehotbatch(y, 1:k) .* p; dims=1))
 end
 function mlogloss(m, x, y, w)
     p = logsoftmax(m(x); dims=1)
-    return _mlogloss_from_logprobs(p, y, w)
+    k = size(p, 1)
+    sum(-sum(onehotbatch(y, 1:k) .* p; dims=1) .* w) / sum(w)
 end
 function mlogloss(m, x, y, w, offset)
     p = logsoftmax(m(x) .+ offset; dims=1)
-    return _mlogloss_from_logprobs(p, y, w)
+    k = size(p, 1)
+    sum(-sum(onehotbatch(y, 1:k) .* p; dims=1) .* w) / sum(w)
 end
 
 gaussian_mle_loss(μ::AbstractVector{T}, σ::AbstractVector{T}, y::AbstractVector{T}) where {T} =
