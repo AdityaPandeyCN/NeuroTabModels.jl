@@ -4,7 +4,7 @@ export get_loss_fn, get_loss_type
 export LossType, MSE, MAE, LogLoss, MLogLoss, GaussianMLE, Tweedie
 
 import Statistics: mean, std
-import Flux: logσ, logsoftmax, softmax, relu, hardsigmoid, onehotbatch
+import Flux: logσ, logsoftmax, softmax, relu, hardsigmoid
 
 abstract type LossType end
 abstract type MSE <: LossType end
@@ -69,37 +69,30 @@ function tweedie(m, x, y, w, offset)
     ) / sum(w)
 end
 
-function _mlogloss_from_logprobs(p, y)
-    n = length(y)
-    acc = zero(eltype(p))
-    @inbounds for i in 1:n
-        acc -= p[Int(y[i]), i]
-    end
-    return acc / n
-end
-
-function _mlogloss_from_logprobs(p, y, w)
-    acc = zero(eltype(p))
-    wsum = zero(eltype(w))
-    @inbounds for i in 1:length(y)
-        wi = w[i]
-        wsum += wi
-        acc -= p[Int(y[i]), i] * wi
-    end
-    return acc / wsum
-end
-
+# GPU & Enzyme compatible - no OneHotArrays
 function mlogloss(m, x, y)
     p = logsoftmax(m(x); dims=1)
-    return _mlogloss_from_logprobs(p, y)
+    k, n = size(p)
+    col_idx = similar(y)
+    col_idx .= 1:n
+    linear_idx = y .+ k .* (col_idx .- 1)
+    -mean(p[linear_idx])
 end
 function mlogloss(m, x, y, w)
     p = logsoftmax(m(x); dims=1)
-    return _mlogloss_from_logprobs(p, y, w)
+    k, n = size(p)
+    col_idx = similar(y)
+    col_idx .= 1:n
+    linear_idx = y .+ k .* (col_idx .- 1)
+    -sum(p[linear_idx] .* w) / sum(w)
 end
 function mlogloss(m, x, y, w, offset)
     p = logsoftmax(m(x) .+ offset; dims=1)
-    return _mlogloss_from_logprobs(p, y, w)
+    k, n = size(p)
+    col_idx = similar(y)
+    col_idx .= 1:n
+    linear_idx = y .+ k .* (col_idx .- 1)
+    -sum(p[linear_idx] .* w) / sum(w)
 end
 
 gaussian_mle_loss(μ::AbstractVector{T}, σ::AbstractVector{T}, y::AbstractVector{T}) where {T} =
