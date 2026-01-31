@@ -6,7 +6,7 @@ using Random: seed!
 Threads.nthreads()
 
 seed!(123)
-nobs = Int(1e6)
+nobs = Int(1e5)
 num_feat = Int(100)
 @info "testing with: $nobs observations | $num_feat features."
 X = rand(Float32, nobs, num_feat)
@@ -36,11 +36,11 @@ arch = NeuroTabModels.NeuroTreeConfig(;
 learner = NeuroTabRegressor(
     arch;
     loss=:mse,
-    nrounds=10,
+    nrounds=1,
     early_stopping_rounds=2,
     lr=1e-2,
     batchsize=2048,
-    device=:gpu
+    device=:cpu
 )
 
 # desktop gpu: 13.476383 seconds (26.42 M allocations: 5.990 GiB, 9.44% gc time)

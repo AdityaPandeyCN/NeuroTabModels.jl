@@ -10,7 +10,8 @@ using ..Metrics
 
 import MLJModelInterface: fit
 import CUDA, cuDNN
-import Enzyme: Duplicated, Const
+import Enzyme
+import Enzyme: Duplicated, Const, Reverse, set_runtime_activity
 import Enzyme.API
 import Optimisers
 import Optimisers: OptimiserChain, WeightDecay, Adam
@@ -22,13 +23,6 @@ using CategoricalArrays
 
 include("callback.jl")
 using .CallBacks
-
-function compute_grads(loss, model, batch)
-    dup_model = Duplicated(model)
-    const_args = map(Const, batch)
-    grads = Flux.gradient((m, args...) -> loss(m, args...), dup_model, const_args...)
-    return grads[1]
-end
 
 function init(
     config::LearnerTypes,
@@ -144,6 +138,7 @@ function fit(
 
     while m.info[:nrounds] < config.nrounds
         fit_iter!(m, cache)
+        m.info[:nrounds] += 1
         iter = m.info[:nrounds]
         if !isnothing(logger)
             cb(logger, iter, m)
@@ -160,16 +155,32 @@ end
 
 function fit_iter!(m, cache)
     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-    GC.gc(true)
-    if typeof(cache[:dtrain]) <: CUDA.CuIterator
-        CUDA.reclaim()
-    end
     for d in data
-        grads = compute_grads(loss, m, d)
-        Optimisers.update!(opts, m, grads)
+        const_args = map(Const, d)
+        grads = Enzyme.gradient(set_runtime_activity(Reverse), (m, args...) -> loss(m, args...), m, const_args...)
+        Optimisers.update!(opts, m, grads[1])
     end
-    m.info[:nrounds] += 1
     return nothing
 end
+# function fit_iter!(m, cache)
+#     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
+#     GC.gc(true)
+#     if typeof(cache[:dtrain]) <: CUDA.CuIterator
+#         CUDA.reclaim()
+#     end
+#     for d in data
+#         grads = compute_grads(loss, m, d)
+#         Optimisers.update!(opts, m, grads)
+#     end
+#     m.info[:nrounds] += 1
+#     return nothing
+# end
+
+# function compute_grads(loss, model, batch)
+#     dup_model = Duplicated(model)
+#     const_args = map(Const, batch)
+#     grads = Flux.gradient((m, args...) -> loss(m, args...), dup_model, const_args...)
+#     return grads[1]
+# end
 
 end
