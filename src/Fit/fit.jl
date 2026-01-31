@@ -11,6 +11,7 @@ using ..Metrics
 import MLJModelInterface: fit
 import CUDA, cuDNN
 import Enzyme: Duplicated, Const
+import Enzyme.API
 import Optimisers
 import Optimisers: OptimiserChain, WeightDecay, Adam
 import Flux
