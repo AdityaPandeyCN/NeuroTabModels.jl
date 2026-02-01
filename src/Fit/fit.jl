@@ -10,7 +10,8 @@ using ..Metrics
 
 import MLJModelInterface: fit
 import CUDA, cuDNN
-import Enzyme: Duplicated, Const
+import Enzyme
+import Enzyme: Duplicated, Const, Reverse, set_runtime_activity
 import Enzyme.API
 import Optimisers
 import Optimisers: OptimiserChain, WeightDecay, Adam
@@ -22,13 +23,6 @@ using CategoricalArrays
 
 include("callback.jl")
 using .CallBacks
-
-function compute_grads(loss, model, batch)
-    dup_model = Duplicated(model)
-    const_args = map(Const, batch)
-    grads = Flux.gradient((m, args...) -> loss(m, args...), dup_model, const_args...)
-    return grads[1]
-end
 
 function init(
     config::LearnerTypes,
@@ -73,10 +67,42 @@ function init(
 
     optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
     opts = Optimisers.setup(optim, m)
-
     cache = (dtrain=dtrain, loss=loss, opts=opts, info=info)
+    # dm = Duplicated(m)
+    # opts = Optimisers.setup(optim, m)
+    # cache = (dm=dm, dtrain=dtrain, loss=loss, opts=opts, info=info)
     return m, cache
 end
+
+"""
+    function fit(
+        config::NeuroTypes,
+        dtrain;
+        feature_names,
+        target_name,
+        weight_name=nothing,
+        offset_name=nothing,
+        deval=nothing,
+        metric=nothing,
+        print_every_n=9999,
+        early_stopping_rounds=9999,
+        verbosity=1,
+        device=:cpu,
+        gpuID=0,
+    )
+Training function of NeuroTabModels' internal API.
+# Arguments
+- `config::LearnerTypes`
+- `dtrain`: Must be `<:AbstractDataFrame`  
+# Keyword arguments
+- `feature_names`:          Required kwarg, a `Vector{Symbol}` or `Vector{String}` of the feature names.
+- `target_name`             Required kwarg, a `Symbol` or `String` indicating the name of the target variable.  
+- `weight_name=nothing`
+- `offset_name=nothing`
+- `deval=nothing`           Data for tracking evaluation metric and perform early stopping.
+- `print_every_n=9999`
+- `verbosity=1`
+"""
 
 function fit(
     config::LearnerTypes,
@@ -130,16 +156,33 @@ end
 
 function fit_iter!(m, cache)
     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-    GC.gc(true)
-    if typeof(cache[:dtrain]) <: CUDA.CuIterator
-        CUDA.reclaim()
-    end
     for d in data
-        grads = compute_grads(loss, m, d)
-        Optimisers.update!(opts, m, grads)
+        const_args = map(Const, d)
+        grads = Enzyme.gradient(set_runtime_activity(Reverse), (m, args...) -> loss(m, args...), m, const_args...)
+        Optimisers.update!(opts, m, grads[1])
     end
     m.info[:nrounds] += 1
     return nothing
 end
+# function fit_iter!(dm, cache)
+#     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
+#     # GC.gc(true)
+#     # if typeof(cache[:dtrain]) <: CUDA.CuIterator
+#     #     CUDA.reclaim()
+#     # end
+#     for d in data
+#         const_args = map(Const, d)
+#         _ = Flux.gradient((m, args...) -> loss(m, args...), dm, const_args...)
+#         Optimisers.update!(opts, dm)
+#     end
+#     return nothing
+# end
+
+# function compute_grads(loss, model, batch)
+#     dup_model = Duplicated(model)
+#     const_args = map(Const, batch)
+#     grads = Flux.gradient((m, args...) -> loss(m, args...), dup_model, const_args...)
+#     return grads[1]
+# end
 
 end
