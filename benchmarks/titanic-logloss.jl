@@ -54,7 +54,7 @@ learner = NeuroTabRegressor(
     nrounds=200,
     early_stopping_rounds=2,
     lr=3e-2,
-    device=:cpu
+    device=:gpu
 )
 
 # learner = NeuroTabRegressor(;
