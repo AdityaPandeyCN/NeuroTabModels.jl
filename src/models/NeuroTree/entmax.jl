@@ -1,6 +1,5 @@
 # Reference: https://github.com/deep-spin/entmax/blob/master/entmax/activations.py
 one_to_vec(x) = reshape(vec(1:size(x, 2)), 1, :)
-one_to_vec(x::AnyCuArray) = reshape(CUDA.CuArray(1:size(x, 2)), 1, :)
 
 function entmax_threshold_and_support(x)
 
@@ -36,15 +35,15 @@ end
 
 function rrule(::typeof(entmax15), x)
     out = entmax15(x)
-    function entmax15_pullback(ȳ)
-        Δ_entmax15(ȳ, out)
+    function entmax15_pullback(ȳ)
+        Δ_entmax15(ȳ, out)
     end
     return out, entmax15_pullback
 end
 
-function Δ_entmax15(ȳ, out)
+function Δ_entmax15(ȳ, out)
     gppr = sqrt.(out)  # = 1 / g'' (Y) 
-    Δ = ȳ .* gppr
+    Δ = ȳ .* gppr
     q = sum(Δ, dims=2) ./ sum(gppr, dims=2)
     Δ = Δ .- q .* gppr
     return NoTangent(), Δ

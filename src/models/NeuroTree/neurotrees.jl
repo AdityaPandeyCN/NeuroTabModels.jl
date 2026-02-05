@@ -3,10 +3,9 @@ module NeuroTrees
 export NeuroTreeConfig
 
 import .Threads: @threads
-using CUDA
 
 import Flux
-import Flux: @layer, trainmode!, gradient, Chain, DataLoader, cpu, gpu
+import Flux: @layer, trainmode!, gradient, Chain, DataLoader, cpu
 import Flux: relu, logσ, logsoftmax, softmax, softmax!, sigmoid, sigmoid_fast, hardsigmoid, tanh, tanh_fast, hardtanh, softplus, onecold, onehotbatch, glorot_uniform
 import Flux: BatchNorm, Dense, Dropout, MultiHeadAttention, Parallel
 
@@ -80,7 +79,7 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
     if config.MLE_tree_split && outsize == 2
         outsize ÷= 2
         chain = Chain(
-            # BatchNorm(nfeats),  # REMOVED FOR TESTING
+            BatchNorm(nfeats),
             Parallel(
                 vcat,
                 StackTree(nfeats => outsize;
@@ -107,7 +106,7 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
         )
     else
         chain = Chain(
-            # BatchNorm(nfeats),  # REMOVED FOR TESTING
+            BatchNorm(nfeats),
             StackTree(nfeats => outsize;
                 tree_type=config.tree_type,
                 depth=config.depth,
@@ -119,6 +118,7 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
                 scaler=config.scaler,
                 init_scale=config.init_scale)
         )
+
     end
 end
 

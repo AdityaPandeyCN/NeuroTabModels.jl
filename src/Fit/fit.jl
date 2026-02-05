@@ -9,14 +9,12 @@ using ..Losses
 using ..Metrics
 
 import MLJModelInterface: fit
-import CUDA, cuDNN
-import Enzyme
-import Enzyme: Duplicated, Const, Reverse, set_runtime_activity
-import Enzyme.API
+import Reactant
+import Reactant: ConcreteRArray
 import Optimisers
 import Optimisers: OptimiserChain, WeightDecay, Adam
 import Flux
-import Flux: gradient, cpu, gpu
+import ADTypes: AutoEnzyme
 
 using DataFrames
 using CategoricalArrays
@@ -51,7 +49,8 @@ function init(
         outsize = 2
     end
 
-    dtrain = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device)
+    # Always use CPU DataLoader - Reactant handles device transfer
+    dtrain = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device=:cpu)
 
     info = Dict(
         :nrounds => 0,
@@ -61,48 +60,51 @@ function init(
 
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
-    if device == :gpu
-        m = m |> gpu
-    end
 
     optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
     opts = Optimisers.setup(optim, m)
-    cache = (dtrain=dtrain, loss=loss, opts=opts, info=info)
-    # dm = Duplicated(m)
-    # opts = Optimisers.setup(optim, m)
-    # cache = (dm=dm, dtrain=dtrain, loss=loss, opts=opts, info=info)
+
+    if device == :gpu
+        # Get sample batch to determine signature and compile
+        sample_batch = first(dtrain)
+        has_weights = length(sample_batch) >= 3 && !isnothing(sample_batch[3])
+        has_offset = length(sample_batch) >= 4 && !isnothing(sample_batch[4])
+        
+        # Create sample Reactant arrays for compilation
+        x_sample = ConcreteRArray(sample_batch[1])
+        y_sample = ConcreteRArray(sample_batch[2])
+        m_ra = Reactant.to_rarray(m)
+        
+        # Compile the appropriate function signature once
+        if has_weights && has_offset
+            w_sample = ConcreteRArray(sample_batch[3])
+            o_sample = ConcreteRArray(sample_batch[4])
+            compiled_step = Reactant.@compile Flux.withgradient(loss, AutoEnzyme(), m_ra, x_sample, y_sample, w_sample, o_sample)
+            sig = :wxyo
+        elseif has_weights
+            w_sample = ConcreteRArray(sample_batch[3])
+            compiled_step = Reactant.@compile Flux.withgradient(loss, AutoEnzyme(), m_ra, x_sample, y_sample, w_sample)
+            sig = :wxy
+        else
+            compiled_step = Reactant.@compile Flux.withgradient(loss, AutoEnzyme(), m_ra, x_sample, y_sample)
+            sig = :xy
+        end
+        
+        cache = (
+            dtrain=dtrain, 
+            loss=loss, 
+            opts=opts, 
+            info=info, 
+            device=device,
+            compiled_step=compiled_step,
+            sig=sig
+        )
+    else
+        cache = (dtrain=dtrain, loss=loss, opts=opts, info=info, device=device)
+    end
+
     return m, cache
 end
-
-"""
-    function fit(
-        config::NeuroTypes,
-        dtrain;
-        feature_names,
-        target_name,
-        weight_name=nothing,
-        offset_name=nothing,
-        deval=nothing,
-        metric=nothing,
-        print_every_n=9999,
-        early_stopping_rounds=9999,
-        verbosity=1,
-        device=:cpu,
-        gpuID=0,
-    )
-Training function of NeuroTabModels' internal API.
-# Arguments
-- `config::LearnerTypes`
-- `dtrain`: Must be `<:AbstractDataFrame`  
-# Keyword arguments
-- `feature_names`:          Required kwarg, a `Vector{Symbol}` or `Vector{String}` of the feature names.
-- `target_name`             Required kwarg, a `Symbol` or `String` indicating the name of the target variable.  
-- `weight_name=nothing`
-- `offset_name=nothing`
-- `deval=nothing`           Data for tracking evaluation metric and perform early stopping.
-- `print_every_n=9999`
-- `verbosity=1`
-"""
 
 function fit(
     config::LearnerTypes,
@@ -115,11 +117,6 @@ function fit(
     print_every_n=9999,
     verbosity=1
 )
-
-    device = Symbol(config.device)
-    if device == :gpu
-        CUDA.device!(config.gpuID)
-    end
 
     feature_names = Symbol.(feature_names)
     target_name = Symbol(target_name)
@@ -155,34 +152,49 @@ function fit(
 end
 
 function fit_iter!(m, cache)
-    loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
+    loss_fn, opts, data, device = cache[:loss], cache[:opts], cache[:dtrain], cache[:device]
+    
     for d in data
-        const_args = map(Const, d)
-        grads = Enzyme.gradient(set_runtime_activity(Reverse), (m, args...) -> loss(m, args...), m, const_args...)
-        Optimisers.update!(opts, m, grads[1])
+        x = d[1]
+        y = d[2]
+        w = length(d) >= 3 ? d[3] : nothing
+        o = length(d) >= 4 ? d[4] : nothing
+        
+        if device == :gpu
+            x_ra = ConcreteRArray(x)
+            y_ra = ConcreteRArray(y)
+            m_ra = Reactant.to_rarray(m)
+            
+            compiled_step = cache[:compiled_step]
+            sig = cache[:sig]
+            
+            # Call pre-compiled function with ALL arguments including loss_fn and AutoEnzyme()
+            if sig == :wxyo
+                w_ra = ConcreteRArray(w)
+                o_ra = ConcreteRArray(o)
+                _, grads = compiled_step(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra, o_ra)
+            elseif sig == :wxy
+                w_ra = ConcreteRArray(w)
+                _, grads = compiled_step(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra)
+            else  # :xy
+                _, grads = compiled_step(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra)
+            end
+            
+            Optimisers.update!(opts, m, grads[1])
+        else
+            # CPU path with Zygote
+            if !isnothing(w) && !isnothing(o)
+                grads = Flux.gradient(model -> loss_fn(model, x, y, w, o), m)[1]
+            elseif !isnothing(w)
+                grads = Flux.gradient(model -> loss_fn(model, x, y, w), m)[1]
+            else
+                grads = Flux.gradient(model -> loss_fn(model, x, y), m)[1]
+            end
+            Optimisers.update!(opts, m, grads)
+        end
     end
     m.info[:nrounds] += 1
     return nothing
 end
-# function fit_iter!(dm, cache)
-#     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-#     # GC.gc(true)
-#     # if typeof(cache[:dtrain]) <: CUDA.CuIterator
-#     #     CUDA.reclaim()
-#     # end
-#     for d in data
-#         const_args = map(Const, d)
-#         _ = Flux.gradient((m, args...) -> loss(m, args...), dm, const_args...)
-#         Optimisers.update!(opts, dm)
-#     end
-#     return nothing
-# end
-
-# function compute_grads(loss, model, batch)
-#     dup_model = Duplicated(model)
-#     const_args = map(Const, batch)
-#     grads = Flux.gradient((m, args...) -> loss(m, args...), dup_model, const_args...)
-#     return grads[1]
-# end
 
 end

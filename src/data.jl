@@ -7,7 +7,6 @@ import MLUtils: DataLoader
 
 using DataFrames
 using CategoricalArrays
-using CUDA: CuIterator
 
 """
     ContainerTrain
@@ -79,11 +78,9 @@ function get_df_loader_train(
     container = ContainerTrain(x, y, w, offset)
     batchsize = min(batchsize, length(container))
     dtrain = DataLoader(container; shuffle, batchsize, partial=true, parallel=false)
-    if device == :gpu
-        return CuIterator(dtrain)
-    else
-        return dtrain
-    end
+    
+    # Reactant handles GPU transfer - just return the DataLoader
+    return dtrain
 end
 
 
@@ -102,12 +99,12 @@ function getindex(data::ContainerInfer{A,D}, idx::AbstractVector) where {A,D<:No
     x = data.x[:, idx]
     return x
 end
-function getindex(data::ContainerTrain{A,D}, idx::AbstractVector) where {A,D<:AbstractVector}
+function getindex(data::ContainerInfer{A,D}, idx::AbstractVector) where {A,D<:AbstractVector}
     x = data.x[:, idx]
     offset = data.offset[idx]
     return (x, offset)
 end
-function getindex(data::ContainerTrain{A,D}, idx::AbstractVector) where {A,D<:AbstractMatrix}
+function getindex(data::ContainerInfer{A,D}, idx::AbstractVector) where {A,D<:AbstractMatrix}
     x = data.x[:, idx]
     offset = data.offset[:, idx]
     return (x, offset)
@@ -132,11 +129,9 @@ function get_df_loader_infer(
     container = ContainerInfer(x, offset)
     batchsize = min(batchsize, length(container))
     dinfer = DataLoader(container; shuffle=false, batchsize, partial=true, parallel=false)
-    if device == :gpu
-        return CuIterator(dinfer)
-    else
-        return dinfer
-    end
+    
+    # Reactant handles GPU transfer - just return the DataLoader
+    return dinfer
 end
 
 end #module

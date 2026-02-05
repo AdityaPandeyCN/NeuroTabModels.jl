@@ -2,8 +2,7 @@ module CallBacks
 
 using DataFrames
 using Statistics: mean, median
-using Flux: cpu, gpu
-using CUDA: CuIterator
+using Flux: cpu
 
 using ..Learners: LearnerTypes
 using ..Data: get_df_loader_train
@@ -34,7 +33,7 @@ function CallBack(
     device = config.device
     batchsize = config.batchsize
     feval = metric_dict[config.metric]
-    deval = get_df_loader_train(deval; feature_names, target_name, weight_name, offset_name, batchsize, device)
+    deval = get_df_loader_train(deval; feature_names, target_name, weight_name, offset_name, batchsize, device=:cpu)
     return CallBack(feval, deval)
 end
 
