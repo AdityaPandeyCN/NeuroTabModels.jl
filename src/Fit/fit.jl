@@ -9,10 +9,12 @@ using ..Losses
 using ..Metrics
 
 import MLJModelInterface: fit
-import CUDA, cuDNN
+import Reactant
+import Reactant: ConcreteRArray
 import Optimisers
-import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
-import Flux: trainmode!, gradient, cpu, gpu
+import Optimisers: OptimiserChain, WeightDecay, Adam
+import Flux
+import ADTypes: AutoEnzyme
 
 using DataFrames
 using CategoricalArrays
@@ -29,7 +31,6 @@ function init(
     offset_name=nothing,
 )
 
-    device = config.device
     batchsize = config.batchsize
     nfeats = length(feature_names)
     loss = get_loss_fn(config.loss)
@@ -47,7 +48,7 @@ function init(
         outsize = 2
     end
 
-    dtrain = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device)
+    dtrain = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize)
 
     info = Dict(
         :nrounds => 0,
@@ -57,11 +58,8 @@ function init(
 
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
-    if device == :gpu
-        m = m |> gpu
-    end
 
-    optim = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
+    optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
     opts = Optimisers.setup(optim, m)
 
     cache = (dtrain=dtrain, loss=loss, opts=opts, info=info)
@@ -82,8 +80,6 @@ end
         print_every_n=9999,
         early_stopping_rounds=9999,
         verbosity=1,
-        device=:cpu,
-        gpuID=0,
     )
 
 Training function of NeuroTabModels' internal API.
@@ -114,11 +110,6 @@ function fit(
     print_every_n=9999,
     verbosity=1
 )
-
-    device = Symbol(config.device)
-    if device == :gpu
-        CUDA.device!(config.gpuID)
-    end
 
     feature_names = Symbol.(feature_names)
     target_name = Symbol(target_name)
@@ -152,18 +143,35 @@ function fit(
     end
 
     m.info[:logger] = logger
-    return m |> cpu
+    return m
 end
 
 function fit_iter!(m, cache)
-    loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-    GC.gc(true)
-    if typeof(cache[:dtrain]) <: CUDA.CuIterator
-        CUDA.reclaim()
-    end
+    loss_fn, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
+    
     for d in data
-        grads = gradient(model -> loss(model, d...), m)[1]
-        Optimisers.update!(opts, m, grads)
+        x, y = d[1], d[2]
+        w = length(d) >= 3 ? d[3] : nothing
+        o = length(d) >= 4 ? d[4] : nothing
+        
+        # Convert to Reactant arrays - backend (CPU/GPU) set via Reactant.set_default_backend()
+        x_ra = ConcreteRArray(x)
+        y_ra = ConcreteRArray(y)
+        m_ra = Reactant.to_rarray(m)
+        
+        # Dispatch based on available args - never pass nothing to traced code
+        if !isnothing(w) && !isnothing(o)
+            w_ra = ConcreteRArray(w)
+            o_ra = ConcreteRArray(o)
+            _, grads = Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra, o_ra)
+        elseif !isnothing(w)
+            w_ra = ConcreteRArray(w)
+            _, grads = Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra)
+        else
+            _, grads = Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra)
+        end
+        
+        Optimisers.update!(opts, m, grads[1])
     end
     m.info[:nrounds] += 1
     return nothing

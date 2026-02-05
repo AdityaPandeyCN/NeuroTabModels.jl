@@ -3,7 +3,6 @@ module NeuroTrees
 export NeuroTreeConfig
 
 import .Threads: @threads
-using CUDA
 
 import Flux
 import Flux: @layer, trainmode!, gradient, Chain, DataLoader, cpu, gpu
