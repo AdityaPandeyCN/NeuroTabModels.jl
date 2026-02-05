@@ -148,17 +148,17 @@ end
 
 function fit_iter!(m, cache)
     loss_fn, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-    
+
     for d in data
         x, y = d[1], d[2]
         w = length(d) >= 3 ? d[3] : nothing
         o = length(d) >= 4 ? d[4] : nothing
-        
+
         # Convert to Reactant arrays - backend (CPU/GPU) set via Reactant.set_default_backend()
         x_ra = ConcreteRArray(x)
         y_ra = ConcreteRArray(y)
         m_ra = Reactant.to_rarray(m)
-        
+
         # Dispatch based on available args - never pass nothing to traced code
         if !isnothing(w) && !isnothing(o)
             w_ra = ConcreteRArray(w)
@@ -170,7 +170,7 @@ function fit_iter!(m, cache)
         else
             _, grads = Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra)
         end
-        
+
         Optimisers.update!(opts, m, grads[1])
     end
     m.info[:nrounds] += 1

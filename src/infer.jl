@@ -22,8 +22,8 @@ end
 
 function (m::NeuroTabModel)(x::AbstractMatrix)
     p = m.chain(x)
-    if ndims(p) == 2 && size(p, 1) == 1
-        p = vec(p)
+    if size(p, 1) == 1
+        p = dropdims(p; dims=1)
     end
     return p
 end
@@ -39,7 +39,7 @@ function infer(m::NeuroTabModel{L}, data::DataLoader) where {L<:Union{MSE,MAE}}
     for x in data
         push!(preds, Vector(m(x)))
     end
-    p = reduce(vcat, preds)
+    p = vcat(preds...)
     return p
 end
 
@@ -48,8 +48,8 @@ function infer(m::NeuroTabModel{<:LogLoss}, data::DataLoader)
     for x in data
         push!(preds, Vector(m(x)))
     end
-    p = reduce(vcat, preds)
-    p = sigmoid.(p)
+    p = vcat(preds...)
+    p .= sigmoid(p)
     return p
 end
 
@@ -58,7 +58,7 @@ function infer(m::NeuroTabModel{<:MLogLoss}, data::DataLoader)
     for x in data
         push!(preds, Matrix(m(x)'))
     end
-    p = reduce(vcat, preds)
+    p = vcat(preds...)
     softmax!(p; dims=2)
     return p
 end
@@ -68,7 +68,8 @@ function infer(m::NeuroTabModel{<:GaussianMLE}, data::DataLoader)
     for x in data
         push!(preds, Matrix(m(x)'))
     end
-    p = reduce(vcat, preds)
+    p = vcat(preds...)
+    p[:, 2] .= exp.(p[:, 2])
     return p
 end
 
@@ -77,8 +78,8 @@ function infer(m::NeuroTabModel{L}, data::DataLoader) where {L<:Union{Tweedie}}
     for x in data
         push!(preds, Vector(m(x)))
     end
-    p = reduce(vcat, preds)
-    p = exp.(p)
+    p = vcat(preds...)
+    p .= exp.(p)
     return p
 end
 
