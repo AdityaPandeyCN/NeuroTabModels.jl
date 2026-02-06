@@ -12,7 +12,7 @@ import MLJModelInterface: fit
 import Reactant
 import Reactant: ConcreteRArray
 import Optimisers
-import Optimisers: OptimiserChain, WeightDecay, Adam
+import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
 import Flux
 import ADTypes: AutoEnzyme
 
