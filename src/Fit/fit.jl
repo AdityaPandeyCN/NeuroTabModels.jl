@@ -59,7 +59,7 @@ function init(
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
 
-    optim = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
+    optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
     opts = Optimisers.setup(optim, m)
 
     cache = (dtrain=dtrain, loss=loss, opts=opts, info=info)
