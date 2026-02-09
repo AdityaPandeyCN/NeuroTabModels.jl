@@ -22,6 +22,48 @@ using CategoricalArrays
 include("callback.jl")
 using .CallBacks
 
+function _compile_grad_fn(loss_fn, m, batch, has_w, has_o)
+    m_ra = Reactant.to_rarray(m)
+    x_ra = ConcreteRArray(batch[1])
+    y_ra = ConcreteRArray(batch[2])
+
+    grad_fn = if has_w && has_o
+        Reactant.@compile Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra,
+            ConcreteRArray(batch[3]), ConcreteRArray(batch[4]))
+    elseif has_w
+        Reactant.@compile Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra,
+            ConcreteRArray(batch[3]))
+    else
+        Reactant.@compile Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra)
+    end
+    full_batchsize = size(batch[1], ndims(batch[1]))
+    return grad_fn, full_batchsize
+end
+
+function _grad_step(grad_fn, loss_fn, m_ra, x_ra, y_ra, d, has_w, has_o, is_full)
+    if has_w && has_o
+        w_ra, o_ra = ConcreteRArray(d[3]), ConcreteRArray(d[4])
+        return is_full ?
+            grad_fn(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra, o_ra) :
+            Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra, o_ra)
+    elseif has_w
+        w_ra = ConcreteRArray(d[3])
+        return is_full ?
+            grad_fn(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra) :
+            Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra)
+    else
+        return is_full ?
+            grad_fn(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra) :
+            Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra)
+    end
+end
+
+function _to_cpu_grads(grads)
+    return Flux.fmap(grads) do x
+        x isa Reactant.ConcreteRArray ? Array(x) : x
+    end
+end
+
 function init(
     config::LearnerTypes,
     df::AbstractDataFrame;
@@ -30,6 +72,7 @@ function init(
     weight_name=nothing,
     offset_name=nothing,
 )
+
     batchsize = config.batchsize
     nfeats = length(feature_names)
     loss = get_loss_fn(config.loss)
@@ -47,7 +90,7 @@ function init(
         outsize = 2
     end
 
-    dtrain = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device=:cpu)
+    dtrain = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize)
 
     info = Dict(
         :nrounds => 0,
@@ -60,11 +103,54 @@ function init(
 
     optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
     opts = Optimisers.setup(optim, m)
-    
-    cache = (dtrain=dtrain, loss=loss, opts=opts, info=info)
+
+    # Compile gradient function once using first batch as template
+    first_batch = first(dtrain)
+    has_w = length(first_batch) >= 3
+    has_o = length(first_batch) >= 4
+    grad_fn, full_batchsize = _compile_grad_fn(loss, m, first_batch, has_w, has_o)
+
+    cache = (
+        dtrain=dtrain, loss=loss, opts=opts, info=info,
+        grad_fn=grad_fn, full_batchsize=full_batchsize,
+        has_w=has_w, has_o=has_o,
+    )
     return m, cache
 end
 
+
+"""
+    function fit(
+        config::NeuroTypes,
+        dtrain;
+        feature_names,
+        target_name,
+        weight_name=nothing,
+        offset_name=nothing,
+        deval=nothing,
+        metric=nothing,
+        print_every_n=9999,
+        early_stopping_rounds=9999,
+        verbosity=1,
+    )
+
+Training function of NeuroTabModels' internal API.
+
+# Arguments
+
+- `config::LearnerTypes`
+- `dtrain`: Must be `<:AbstractDataFrame`  
+
+# Keyword arguments
+
+- `feature_names`:          Required kwarg, a `Vector{Symbol}` or `Vector{String}` of the feature names.
+- `target_name`             Required kwarg, a `Symbol` or `String` indicating the name of the target variable.  
+- `weight_name=nothing`
+- `offset_name=nothing`
+- `deval=nothing`           Data for tracking evaluation metric and perform early stopping.
+- `print_every_n=9999`
+- `verbosity=1`
+"""
 function fit(
     config::LearnerTypes,
     dtrain;
@@ -76,6 +162,7 @@ function fit(
     print_every_n=9999,
     verbosity=1
 )
+
     feature_names = Symbol.(feature_names)
     target_name = Symbol(target_name)
     weight_name = isnothing(weight_name) ? nothing : Symbol(weight_name)
@@ -83,6 +170,7 @@ function fit(
 
     m, cache = init(config, dtrain; feature_names, target_name, weight_name, offset_name)
 
+    # initialize callback and logger if tracking eval data
     logger = nothing
     if !isnothing(deval)
         cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)
@@ -110,30 +198,23 @@ function fit(
 end
 
 function fit_iter!(m, cache)
-    loss_fn, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-    
+    loss_fn = cache[:loss]
+    opts = cache[:opts]
+    data = cache[:dtrain]
+    grad_fn = cache[:grad_fn]
+    full_batchsize = cache[:full_batchsize]
+    has_w = cache[:has_w]
+    has_o = cache[:has_o]
+
     for d in data
-        x, y = d[1], d[2]
-        w = length(d) >= 3 ? d[3] : nothing
-        o = length(d) >= 4 ? d[4] : nothing
-        
-        x_ra = ConcreteRArray(x)
-        y_ra = ConcreteRArray(y)
         m_ra = Reactant.to_rarray(m)
-        
-        # Single path - Reactant backend set via Reactant.set_default_backend()
-        if !isnothing(w) && !isnothing(o)
-            w_ra = ConcreteRArray(w)
-            o_ra = ConcreteRArray(o)
-            _, grads = Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra, o_ra)
-        elseif !isnothing(w)
-            w_ra = ConcreteRArray(w)
-            _, grads = Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra)
-        else
-            _, grads = Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra)
-        end
-        
-        Optimisers.update!(opts, m, grads[1])
+        x_ra = ConcreteRArray(d[1])
+        y_ra = ConcreteRArray(d[2])
+
+        is_full = size(d[1], ndims(d[1])) == full_batchsize
+        _, grads = _grad_step(grad_fn, loss_fn, m_ra, x_ra, y_ra, d, has_w, has_o, is_full)
+
+        Optimisers.update!(opts, m, _to_cpu_grads(grads[1]))
     end
     m.info[:nrounds] += 1
     return nothing
