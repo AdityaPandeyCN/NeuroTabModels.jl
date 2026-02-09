@@ -12,7 +12,7 @@ import MLJModelInterface: fit
 import Reactant
 import Reactant: ConcreteRArray
 import Optimisers
-import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
+import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov
 import Flux
 import ADTypes: AutoEnzyme
 
@@ -21,6 +21,18 @@ using CategoricalArrays
 
 include("callback.jl")
 using .CallBacks
+
+function _compile_grad_fn(loss_fn, m, batch)
+    m_ra = Reactant.to_rarray(m)
+    args_ra = map(b -> ConcreteRArray(b), batch)
+    grad_fn = Reactant.@compile Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, args_ra...)
+    full_batchsize = size(batch[1], ndims(batch[1]))
+    return grad_fn, full_batchsize
+end
+
+function _to_cpu_grads(grads)
+    return Flux.fmap(x -> x isa ConcreteRArray ? Array(x) : x, grads)
+end
 
 function init(
     config::LearnerTypes,
@@ -59,10 +71,17 @@ function init(
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
 
-    optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
+    optim = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
     opts = Optimisers.setup(optim, m)
 
-    cache = (dtrain=dtrain, loss=loss, opts=opts, info=info)
+    # Compile gradient function once using first batch as template
+    first_batch = first(dtrain)
+    grad_fn, full_batchsize = _compile_grad_fn(loss, m, first_batch)
+
+    cache = (
+        dtrain=dtrain, loss=loss, opts=opts, info=info,
+        grad_fn=grad_fn, full_batchsize=full_batchsize,
+    )
     return m, cache
 end
 
@@ -129,7 +148,6 @@ function fit(
         (verbosity > 0) && @info "Init training"
     end
 
-    # for iter = 1:config.nrounds
     while m.info[:nrounds] < config.nrounds
         fit_iter!(m, cache)
         iter = m.info[:nrounds]
@@ -147,31 +165,23 @@ function fit(
 end
 
 function fit_iter!(m, cache)
-    loss_fn, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
+    loss_fn = cache[:loss]
+    opts = cache[:opts]
+    grad_fn = cache[:grad_fn]
+    full_batchsize = cache[:full_batchsize]
 
-    for d in data
-        x, y = d[1], d[2]
-        w = length(d) >= 3 ? d[3] : nothing
-        o = length(d) >= 4 ? d[4] : nothing
-
-        # Convert to Reactant arrays - backend (CPU/GPU) set via Reactant.set_default_backend()
-        x_ra = ConcreteRArray(x)
-        y_ra = ConcreteRArray(y)
+    for d in cache[:dtrain]
         m_ra = Reactant.to_rarray(m)
+        args_ra = map(b -> ConcreteRArray(b), d)
+        is_full = size(d[1], ndims(d[1])) == full_batchsize
 
-        # Dispatch based on available args - never pass nothing to traced code
-        if !isnothing(w) && !isnothing(o)
-            w_ra = ConcreteRArray(w)
-            o_ra = ConcreteRArray(o)
-            _, grads = Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra, o_ra)
-        elseif !isnothing(w)
-            w_ra = ConcreteRArray(w)
-            _, grads = Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra)
+        _, grads = if is_full
+            grad_fn(loss_fn, AutoEnzyme(), m_ra, args_ra...)
         else
-            _, grads = Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra)
+            Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, args_ra...)
         end
 
-        Optimisers.update!(opts, m, grads[1])
+        Optimisers.update!(opts, m, _to_cpu_grads(grads[1]))
     end
     m.info[:nrounds] += 1
     return nothing
