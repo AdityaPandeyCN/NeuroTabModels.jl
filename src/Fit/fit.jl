@@ -22,46 +22,16 @@ using CategoricalArrays
 include("callback.jl")
 using .CallBacks
 
-function _compile_grad_fn(loss_fn, m, batch, has_w, has_o)
+function _compile_grad_fn(loss_fn, m, batch)
     m_ra = Reactant.to_rarray(m)
-    x_ra = ConcreteRArray(batch[1])
-    y_ra = ConcreteRArray(batch[2])
-
-    grad_fn = if has_w && has_o
-        Reactant.@compile Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra,
-            ConcreteRArray(batch[3]), ConcreteRArray(batch[4]))
-    elseif has_w
-        Reactant.@compile Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra,
-            ConcreteRArray(batch[3]))
-    else
-        Reactant.@compile Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra)
-    end
+    args_ra = map(b -> ConcreteRArray(b), batch)
+    grad_fn = Reactant.@compile Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, args_ra...)
     full_batchsize = size(batch[1], ndims(batch[1]))
     return grad_fn, full_batchsize
 end
 
-function _grad_step(grad_fn, loss_fn, m_ra, x_ra, y_ra, d, has_w, has_o, is_full)
-    if has_w && has_o
-        w_ra, o_ra = ConcreteRArray(d[3]), ConcreteRArray(d[4])
-        return is_full ?
-            grad_fn(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra, o_ra) :
-            Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra, o_ra)
-    elseif has_w
-        w_ra = ConcreteRArray(d[3])
-        return is_full ?
-            grad_fn(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra) :
-            Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra, w_ra)
-    else
-        return is_full ?
-            grad_fn(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra) :
-            Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, x_ra, y_ra)
-    end
-end
-
 function _to_cpu_grads(grads)
-    return Flux.fmap(grads) do x
-        x isa Reactant.ConcreteRArray ? Array(x) : x
-    end
+    return Flux.fmap(x -> x isa ConcreteRArray ? Array(x) : x, grads)
 end
 
 function init(
@@ -106,14 +76,11 @@ function init(
 
     # Compile gradient function once using first batch as template
     first_batch = first(dtrain)
-    has_w = length(first_batch) >= 3
-    has_o = length(first_batch) >= 4
-    grad_fn, full_batchsize = _compile_grad_fn(loss, m, first_batch, has_w, has_o)
+    grad_fn, full_batchsize = _compile_grad_fn(loss, m, first_batch)
 
     cache = (
         dtrain=dtrain, loss=loss, opts=opts, info=info,
         grad_fn=grad_fn, full_batchsize=full_batchsize,
-        has_w=has_w, has_o=has_o,
     )
     return m, cache
 end
@@ -200,19 +167,19 @@ end
 function fit_iter!(m, cache)
     loss_fn = cache[:loss]
     opts = cache[:opts]
-    data = cache[:dtrain]
     grad_fn = cache[:grad_fn]
     full_batchsize = cache[:full_batchsize]
-    has_w = cache[:has_w]
-    has_o = cache[:has_o]
 
-    for d in data
+    for d in cache[:dtrain]
         m_ra = Reactant.to_rarray(m)
-        x_ra = ConcreteRArray(d[1])
-        y_ra = ConcreteRArray(d[2])
-
+        args_ra = map(b -> ConcreteRArray(b), d)
         is_full = size(d[1], ndims(d[1])) == full_batchsize
-        _, grads = _grad_step(grad_fn, loss_fn, m_ra, x_ra, y_ra, d, has_w, has_o, is_full)
+
+        _, grads = if is_full
+            grad_fn(loss_fn, AutoEnzyme(), m_ra, args_ra...)
+        else
+            Reactant.@jit Flux.withgradient(loss_fn, AutoEnzyme(), m_ra, args_ra...)
+        end
 
         Optimisers.update!(opts, m, _to_cpu_grads(grads[1]))
     end
