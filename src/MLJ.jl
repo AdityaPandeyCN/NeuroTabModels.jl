@@ -4,10 +4,17 @@ using Tables
 using DataFrames
 import ..Learners: NeuroTabRegressor, NeuroTabClassifier, LearnerTypes
 import ..Fit: init, fit_iter!
+import Reactant: ConcreteRArray
+import Flux
 import MLJModelInterface as MMI
 import MLJModelInterface: fit, update, predict, schema
 
 export fit, update, predict
+
+function _sync_to_cpu!(fitresult, cache)
+  chain_cpu = Flux.fmap(x -> x isa ConcreteRArray ? Array(x) : x, cache[:m_ra].chain)
+  Flux.loadmodel!(fitresult.chain, chain_cpu)
+end
 
 function fit(
   model::LearnerTypes,
@@ -16,7 +23,8 @@ function fit(
   y,
   w=nothing)
 
-  Tables.istable(A) ? dtrain = DataFrame(A) : error("`A` must be a Table")
+  Tables.istable(A) || error("`A` must be a Table")
+  dtrain = DataFrame(A)
   feature_names = string.(collect(Tables.schema(dtrain).names))
   @assert "_target" ∉ feature_names
   dtrain._target = y
@@ -36,6 +44,7 @@ function fit(
   while fitresult.info[:nrounds] < model.nrounds
     fit_iter!(fitresult, cache)
   end
+  _sync_to_cpu!(fitresult, cache)
 
   report = (features=fitresult.info[:feature_names],)
   return fitresult, cache, report
@@ -45,7 +54,6 @@ function okay_to_continue(model, fitresult, cache)
   return model.nrounds - fitresult.info[:nrounds] >= 0
 end
 
-# For EarlyStopping.jl support
 MMI.iteration_parameter(::Type{<:LearnerTypes}) = :nrounds
 
 function update(
@@ -61,28 +69,29 @@ function update(
     while fitresult.info[:nrounds] < model.nrounds
       fit_iter!(fitresult, cache)
     end
+    _sync_to_cpu!(fitresult, cache)
     report = (features=fitresult.info[:feature_names],)
+    return fitresult, cache, report
   else
     fitresult, cache, report = fit(model, verbosity, A, y, w)
+    return fitresult, cache, report
   end
-  return fitresult, cache, report
 end
 
-function predict(::NeuroTabRegressor, fitresult, A; device=:cpu, gpuID=0)
+function predict(::NeuroTabRegressor, fitresult, A)
+  Tables.istable(A) || error("`A` must be a Table")
   df = DataFrame(A)
-  Tables.istable(A) ? df = DataFrame(A) : error("`A` must be a Table")
-  pred = fitresult(df; device, gpuID)
+  pred = fitresult(df)
   return pred
 end
 
-function predict(::NeuroTabClassifier, fitresult, A; device=:cpu, gpuID=0)
+function predict(::NeuroTabClassifier, fitresult, A)
+  Tables.istable(A) || error("`A` must be a Table")
   df = DataFrame(A)
-  Tables.istable(A) ? df = DataFrame(A) : error("`A` must be a Table")
-  pred = fitresult(df; device, gpuID)
+  pred = fitresult(df)
   return MMI.UnivariateFinite(fitresult.info[:target_levels], pred)
 end
 
-# Metadata
 MMI.metadata_pkg.(
   (NeuroTabRegressor, NeuroTabClassifier),
   name="NeuroTabModels",
