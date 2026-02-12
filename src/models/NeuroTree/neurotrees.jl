@@ -79,7 +79,7 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
     if config.MLE_tree_split && outsize == 2
         outsize ÷= 2
         chain = Chain(
-            BatchNorm(nfeats),
+            BatchNorm(nfeats, track_stats=false),
             Parallel(
                 vcat,
                 StackTree(nfeats => outsize;
@@ -106,7 +106,7 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
         )
     else
         chain = Chain(
-            BatchNorm(nfeats),
+            BatchNorm(nfeats, track_stats=false),
             StackTree(nfeats => outsize;
                 tree_type=config.tree_type,
                 depth=config.depth,
