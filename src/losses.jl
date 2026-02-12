@@ -4,7 +4,7 @@ export get_loss_fn, get_loss_type
 export LossType, MSE, MAE, LogLoss, MLogLoss, GaussianMLE, Tweedie
 
 import Statistics: mean, std
-import Flux: logσ, logsoftmax, softmax, relu, hardsigmoid, onehotbatch
+import Flux: logσ, logsoftmax, softmax, relu, hardsigmoid
 
 abstract type LossType end
 abstract type MSE <: LossType end
@@ -69,20 +69,19 @@ function tweedie(m, x, y, w, offset)
     ) / sum(w)
 end
 
+# y is expected as a dense one-hot Float32 matrix (outsize, batchsize),
+# pre-encoded in _to_batches_ra. No onehotbatch call needed here.
 function mlogloss(m, x, y)
     p = logsoftmax(m(x); dims=1)
-    k = size(p, 1)
-    mean(-sum(onehotbatch(y, 1:k) .* p; dims=1))
+    mean(-sum(y .* p; dims=1))
 end
 function mlogloss(m, x, y, w)
     p = logsoftmax(m(x); dims=1)
-    k = size(p, 1)
-    sum(-sum(onehotbatch(y, 1:k) .* p; dims=1) .* w) / sum(w)
+    sum(-sum(y .* p; dims=1) .* w) / sum(w)
 end
 function mlogloss(m, x, y, w, offset)
     p = logsoftmax(m(x) .+ offset; dims=1)
-    k = size(p, 1)
-    sum(-sum(onehotbatch(y, 1:k) .* p; dims=1) .* w) / sum(w)
+    sum(-sum(y .* p; dims=1) .* w) / sum(w)
 end
 
 gaussian_mle_loss(μ::AbstractVector{T}, σ::AbstractVector{T}, y::AbstractVector{T}) where {T} =
