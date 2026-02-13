@@ -3,18 +3,11 @@ module MLJ
 using Tables
 using DataFrames
 import ..Learners: NeuroTabRegressor, NeuroTabClassifier, LearnerTypes
-import ..Fit: init, fit_iter!
-import Reactant: ConcreteRArray
-import Flux
+import ..Fit: init, fit_iter!, _sync_to_cpu!
 import MLJModelInterface as MMI
 import MLJModelInterface: fit, update, predict, schema
 
 export fit, update, predict
-
-function _sync_to_cpu!(fitresult, cache)
-  chain_cpu = Flux.fmap(x -> x isa ConcreteRArray ? Array(x) : x, cache[:m_ra].chain)
-  Flux.loadmodel!(fitresult.chain, chain_cpu)
-end
 
 function fit(
   model::LearnerTypes,

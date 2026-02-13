@@ -1,6 +1,6 @@
 module Fit
 
-export fit
+export fit, _sync_to_cpu!
 
 using ..Data
 using ..Learners
@@ -55,6 +55,11 @@ function _to_batches_ra(all_batches, L, outsize)
     else
         return [map(b -> ConcreteRArray(b), batch) for batch in all_batches]
     end
+end
+
+function _sync_to_cpu!(m, cache)
+    chain_cpu = Flux.fmap(x -> x isa ConcreteRArray ? Array(x) : x, cache[:m_ra].chain)
+    Flux.loadmodel!(m.chain, chain_cpu)
 end
 
 function init(
@@ -172,7 +177,6 @@ function fit(
 
     m, cache = init(config, dtrain; feature_names, target_name, weight_name, offset_name)
 
-    # initialize callback and logger if tracking eval data
     logger = nothing
     if !isnothing(deval)
         cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)
@@ -187,8 +191,7 @@ function fit(
         fit_iter!(m, cache)
         iter = m.info[:nrounds]
         if !isnothing(logger)
-            chain_cpu = Flux.fmap(x -> x isa ConcreteRArray ? Array(x) : x, cache[:m_ra].chain)
-            Flux.loadmodel!(m.chain, chain_cpu)
+            _sync_to_cpu!(m, cache)
             cb(logger, iter, m)
             if verbosity > 0 && iter % print_every_n == 0
                 @info "iter $iter" metric = logger[:metrics][:metric][end]
@@ -197,8 +200,7 @@ function fit(
         end
     end
 
-    chain_cpu = Flux.fmap(x -> x isa ConcreteRArray ? Array(x) : x, cache[:m_ra].chain)
-    Flux.loadmodel!(m.chain, chain_cpu)
+    _sync_to_cpu!(m, cache)
     m.info[:logger] = logger
     return m
 end
