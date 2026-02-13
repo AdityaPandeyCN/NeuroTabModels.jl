@@ -17,9 +17,11 @@ import Flux
 import Flux: onehotbatch
 import ADTypes: AutoEnzyme
 import Functors: fmap
+import NNlib: pad_constant
 
 using DataFrames
 using CategoricalArrays
+using NNlib: pad_constant
 
 include("callback.jl")
 using .CallBacks
@@ -71,6 +73,10 @@ function init(
     offset_name=nothing,
 )
 
+    # Set Reactant backend based on device config
+    device = Symbol(config.device)
+    Reactant.set_default_backend(device == :gpu ? "gpu" : "cpu")
+
     batchsize = config.batchsize
     nfeats = length(feature_names)
     loss = get_loss_fn(config.loss)
@@ -107,9 +113,18 @@ function init(
     opts_ra = _to_rarray_with_scalars(opts)
 
     all_batches = collect(dtrain)
-    batches_ra = _to_batches_ra(all_batches, L, outsize)
+
+    # Pad last batch to full size if partial
     full_batchsize = size(all_batches[1][1], ndims(all_batches[1][1]))
-    is_full_batch = [size(b[1], ndims(b[1])) == full_batchsize for b in all_batches]
+    last_batchsize = size(all_batches[end][1], ndims(all_batches[end][1]))
+    if last_batchsize < full_batchsize
+        pad_size = full_batchsize - last_batchsize
+        all_batches[end] = map(all_batches[end]) do b
+            pad_constant(b, (0, pad_size), Float32(0); dims=ndims(b))
+        end
+    end
+
+    batches_ra = _to_batches_ra(all_batches, L, outsize)
 
     compiled_step = Reactant.@compile _train_step!(loss, m_ra, opts_ra, batches_ra[1]...)
 
@@ -120,7 +135,6 @@ function init(
         :m_ra => m_ra,
         :opts_ra => opts_ra,
         :batches_ra => batches_ra,
-        :is_full_batch => is_full_batch
     )
     return m, cache
 end
@@ -139,11 +153,16 @@ end
         early_stopping_rounds=9999,
         verbosity=1,
     )
+
 Training function of NeuroTabModels' internal API.
+
 # Arguments
+
 - `config::LearnerTypes`
 - `dtrain`: Must be `<:AbstractDataFrame`  
+
 # Keyword arguments
+
 - `feature_names`:          Required kwarg, a `Vector{Symbol}` or `Vector{String}` of the feature names.
 - `target_name`             Required kwarg, a `Symbol` or `String` indicating the name of the target variable.  
 - `weight_name=nothing`
@@ -204,12 +223,8 @@ function fit_iter!(m, cache)
     m_ra = cache[:m_ra]
     opts_ra = cache[:opts_ra]
 
-    for (args_ra, is_full) in zip(cache[:batches_ra], cache[:is_full_batch])
-        if is_full
-            opts_ra, m_ra = cache[:compiled_step](cache[:loss], m_ra, opts_ra, args_ra...)
-        else
-            opts_ra, m_ra = Reactant.@jit _train_step!(cache[:loss], m_ra, opts_ra, args_ra...)
-        end
+    for args_ra in cache[:batches_ra]
+        opts_ra, m_ra = cache[:compiled_step](cache[:loss], m_ra, opts_ra, args_ra...)
     end
 
     cache[:opts_ra] = opts_ra
@@ -217,25 +232,5 @@ function fit_iter!(m, cache)
     m.info[:nrounds] += 1
     return nothing
 end
-# function fit_iter!(m, cache)
-#     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-#     GC.gc(true)
-#     if typeof(cache[:dtrain]) <: CUDA.CuIterator
-#         CUDA.reclaim()
-#     end
-#     for d in data
-#         grads = compute_grads(loss, m, d)
-#         Optimisers.update!(opts, m, grads)
-#     end
-#     m.info[:nrounds] += 1
-#     return nothing
-# end
-
-# function compute_grads(loss, model, batch)
-#     dup_model = Duplicated(model)
-#     const_args = map(Const, batch)
-#     grads = Flux.gradient((m, args...) -> loss(m, args...), dup_model, const_args...)
-#     return grads[1]
-# end
 
 end
