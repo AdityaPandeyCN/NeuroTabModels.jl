@@ -3,6 +3,9 @@ using DataFrames
 using BenchmarkTools
 using Random: seed!
 
+using Reactant
+Reactant.set_default_backend("gpu")
+
 Threads.nthreads()
 
 seed!(123)
@@ -36,11 +39,10 @@ arch = NeuroTabModels.NeuroTreeConfig(;
 learner = NeuroTabRegressor(
     arch;
     loss=:mse,
-    nrounds=1,
+    nrounds=10,
     early_stopping_rounds=2,
     lr=1e-2,
-    batchsize=2048,
-    device=:cpu
+    batchsize=2048
 )
 
 # desktop gpu: 13.476383 seconds (26.42 M allocations: 5.990 GiB, 9.44% gc time)
@@ -54,4 +56,4 @@ learner = NeuroTabRegressor(
 );
 
 # desktop: 0.771839 seconds (369.20 k allocations: 1.522 GiB, 5.94% gc time)
-@time p_train = m(dtrain; device=:gpu);
+@time p_train = m(dtrain);

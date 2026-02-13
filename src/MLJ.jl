@@ -3,7 +3,7 @@ module MLJ
 using Tables
 using DataFrames
 import ..Learners: NeuroTabRegressor, NeuroTabClassifier, LearnerTypes
-import ..Fit: init, fit_iter!
+import ..Fit: init, fit_iter!, _sync_to_cpu!
 import MLJModelInterface as MMI
 import MLJModelInterface: fit, update, predict, schema
 
@@ -36,6 +36,7 @@ function fit(
   while fitresult.info[:nrounds] < model.nrounds
     fit_iter!(fitresult, cache)
   end
+  _sync_to_cpu!(fitresult, cache)
 
   report = (features=fitresult.info[:feature_names],)
   return fitresult, cache, report
@@ -61,6 +62,7 @@ function update(
     while fitresult.info[:nrounds] < model.nrounds
       fit_iter!(fitresult, cache)
     end
+    _sync_to_cpu!(fitresult, cache)
     report = (features=fitresult.info[:feature_names],)
   else
     fitresult, cache, report = fit(model, verbosity, A, y, w)
@@ -68,17 +70,15 @@ function update(
   return fitresult, cache, report
 end
 
-function predict(::NeuroTabRegressor, fitresult, A; device=:cpu, gpuID=0)
-  df = DataFrame(A)
+function predict(::NeuroTabRegressor, fitresult, A)
   Tables.istable(A) ? df = DataFrame(A) : error("`A` must be a Table")
-  pred = fitresult(df; device, gpuID)
+  pred = fitresult(df)
   return pred
 end
 
-function predict(::NeuroTabClassifier, fitresult, A; device=:cpu, gpuID=0)
-  df = DataFrame(A)
+function predict(::NeuroTabClassifier, fitresult, A)
   Tables.istable(A) ? df = DataFrame(A) : error("`A` must be a Table")
-  pred = fitresult(df; device, gpuID)
+  pred = fitresult(df)
   return MMI.UnivariateFinite(fitresult.info[:target_levels], pred)
 end
 

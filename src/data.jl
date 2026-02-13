@@ -7,11 +7,9 @@ import MLUtils: DataLoader
 
 using DataFrames
 using CategoricalArrays
-using CUDA: CuIterator
 
 """
     ContainerTrain
-
 """
 struct ContainerTrain{A<:AbstractMatrix,B<:AbstractVector,C,D}
     x::A
@@ -48,7 +46,6 @@ function getindex(data::ContainerTrain{A,B,C,D}, idx::AbstractVector) where {A,B
     return (x, y, w, offset)
 end
 
-
 function get_df_loader_train(
     df::AbstractDataFrame;
     feature_names,
@@ -57,8 +54,7 @@ function get_df_loader_train(
     offset_name=nothing,
     batchsize,
     shuffle=true,
-    device=:cpu)
-
+)
     feature_names = Symbol.(feature_names)
     x = Matrix{Float32}(Matrix{Float32}(select(df, feature_names))')
 
@@ -73,23 +69,17 @@ function get_df_loader_train(
     offset = if isnothing(offset_name)
         nothing
     else
-        isa(offset_name, String) ? Float32.(df[!, offset_name]) : offset = Matrix{Float32}(Matrix{Float32}(df[!, data.offset_name])')
+        isa(offset_name, String) ? Float32.(df[!, offset_name]) : Matrix{Float32}(Matrix{Float32}(df[!, offset_name])')
     end
 
     container = ContainerTrain(x, y, w, offset)
     batchsize = min(batchsize, length(container))
     dtrain = DataLoader(container; shuffle, batchsize, partial=true, parallel=false)
-    if device == :gpu
-        return CuIterator(dtrain)
-    else
-        return dtrain
-    end
+    return dtrain
 end
-
 
 """
     ContainerInfer
-
 """
 struct ContainerInfer{A<:AbstractMatrix,D}
     x::A
@@ -102,12 +92,12 @@ function getindex(data::ContainerInfer{A,D}, idx::AbstractVector) where {A,D<:No
     x = data.x[:, idx]
     return x
 end
-function getindex(data::ContainerTrain{A,D}, idx::AbstractVector) where {A,D<:AbstractVector}
+function getindex(data::ContainerInfer{A,D}, idx::AbstractVector) where {A,D<:AbstractVector}
     x = data.x[:, idx]
     offset = data.offset[idx]
     return (x, offset)
 end
-function getindex(data::ContainerTrain{A,D}, idx::AbstractVector) where {A,D<:AbstractMatrix}
+function getindex(data::ContainerInfer{A,D}, idx::AbstractVector) where {A,D<:AbstractMatrix}
     x = data.x[:, idx]
     offset = data.offset[:, idx]
     return (x, offset)
@@ -117,26 +107,21 @@ function get_df_loader_infer(
     df::AbstractDataFrame;
     feature_names,
     offset_name=nothing,
-    batchsize,
-    device=:cpu)
-
+    batchsize=2048,
+)
     feature_names = Symbol.(feature_names)
     x = Matrix{Float32}(Matrix{Float32}(select(df, feature_names))')
 
     offset = if isnothing(offset_name)
         nothing
     else
-        isa(offset_name, String) ? Float32.(df[!, offset_name]) : offset = Matrix{Float32}(Matrix{Float32}(df[!, data.offset_name])')
+        isa(offset_name, String) ? Float32.(df[!, offset_name]) : Matrix{Float32}(Matrix{Float32}(df[!, offset_name])')
     end
 
     container = ContainerInfer(x, offset)
     batchsize = min(batchsize, length(container))
     dinfer = DataLoader(container; shuffle=false, batchsize, partial=true, parallel=false)
-    if device == :gpu
-        return CuIterator(dinfer)
-    else
-        return dinfer
-    end
+    return dinfer
 end
 
 end #module
