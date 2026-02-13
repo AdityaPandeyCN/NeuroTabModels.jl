@@ -73,7 +73,7 @@ function get_df_loader_train(
     offset = if isnothing(offset_name)
         nothing
     else
-        isa(offset_name, String) ? Float32.(df[!, offset_name]) : offset = Matrix{Float32}(Matrix{Float32}(df[!, data.offset_name])')
+        isa(offset_name, String) ? Float32.(df[!, offset_name]) : Matrix{Float32}(Matrix{Float32}(df[!, offset_name])')
     end
 
     container = ContainerTrain(x, y, w, offset)
@@ -102,12 +102,12 @@ function getindex(data::ContainerInfer{A,D}, idx::AbstractVector) where {A,D<:No
     x = data.x[:, idx]
     return x
 end
-function getindex(data::ContainerTrain{A,D}, idx::AbstractVector) where {A,D<:AbstractVector}
+function getindex(data::ContainerInfer{A,D}, idx::AbstractVector) where {A,D<:AbstractVector}
     x = data.x[:, idx]
     offset = data.offset[idx]
     return (x, offset)
 end
-function getindex(data::ContainerTrain{A,D}, idx::AbstractVector) where {A,D<:AbstractMatrix}
+function getindex(data::ContainerInfer{A,D}, idx::AbstractVector) where {A,D<:AbstractMatrix}
     x = data.x[:, idx]
     offset = data.offset[:, idx]
     return (x, offset)
@@ -126,7 +126,7 @@ function get_df_loader_infer(
     offset = if isnothing(offset_name)
         nothing
     else
-        isa(offset_name, String) ? Float32.(df[!, offset_name]) : offset = Matrix{Float32}(Matrix{Float32}(df[!, data.offset_name])')
+        isa(offset_name, String) ? Float32.(df[!, offset_name]) : offset = Matrix{Float32}(Matrix{Float32}(df[!, offset_name])')
     end
 
     container = ContainerInfer(x, offset)
