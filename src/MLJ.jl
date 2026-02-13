@@ -16,8 +16,7 @@ function fit(
   y,
   w=nothing)
 
-  Tables.istable(A) || error("`A` must be a Table")
-  dtrain = DataFrame(A)
+  Tables.istable(A) ? dtrain = DataFrame(A) : error("`A` must be a Table")
   feature_names = string.(collect(Tables.schema(dtrain).names))
   @assert "_target" ∉ feature_names
   dtrain._target = y
@@ -47,6 +46,7 @@ function okay_to_continue(model, fitresult, cache)
   return model.nrounds - fitresult.info[:nrounds] >= 0
 end
 
+# For EarlyStopping.jl support
 MMI.iteration_parameter(::Type{<:LearnerTypes}) = :nrounds
 
 function update(
@@ -64,27 +64,25 @@ function update(
     end
     _sync_to_cpu!(fitresult, cache)
     report = (features=fitresult.info[:feature_names],)
-    return fitresult, cache, report
   else
     fitresult, cache, report = fit(model, verbosity, A, y, w)
-    return fitresult, cache, report
   end
+  return fitresult, cache, report
 end
 
 function predict(::NeuroTabRegressor, fitresult, A)
-  Tables.istable(A) || error("`A` must be a Table")
-  df = DataFrame(A)
+  Tables.istable(A) ? df = DataFrame(A) : error("`A` must be a Table")
   pred = fitresult(df)
   return pred
 end
 
 function predict(::NeuroTabClassifier, fitresult, A)
-  Tables.istable(A) || error("`A` must be a Table")
-  df = DataFrame(A)
+  Tables.istable(A) ? df = DataFrame(A) : error("`A` must be a Table")
   pred = fitresult(df)
   return MMI.UnivariateFinite(fitresult.info[:target_levels], pred)
 end
 
+# Metadata
 MMI.metadata_pkg.(
   (NeuroTabRegressor, NeuroTabClassifier),
   name="NeuroTabModels",
