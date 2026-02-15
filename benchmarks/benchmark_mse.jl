@@ -54,4 +54,5 @@ learner = NeuroTabRegressor(
 );
 
 # desktop: 0.771839 seconds (369.20 k allocations: 1.522 GiB, 5.94% gc time)
-@time p_train = m(dtrain; device=:gpu);
+# FIXME: need to adapt infer
+# @time p_train = m(dtrain; device=:gpu);
