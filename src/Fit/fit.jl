@@ -8,11 +8,14 @@ using ..Models
 using ..Losses
 using ..Metrics
 
+import Random: Xoshiro
 import MLJModelInterface: fit
 import CUDA, cuDNN
 import Optimisers
 import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
-import Flux: trainmode!, gradient, cpu, gpu
+
+using Lux
+using Enzyme, Reactant
 
 using DataFrames
 using CategoricalArrays
@@ -47,7 +50,11 @@ function init(
         outsize = 2
     end
 
-    dtrain = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device)
+    Reactant.set_default_backend("gpu")
+    dev = reactant_device()
+    # dev = gpu_device()
+    # dev = cpu_device()
+    data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device) |> dev
 
     info = Dict(
         :nrounds => 0,
@@ -57,17 +64,16 @@ function init(
 
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
-    if device == :gpu
-        m = m |> gpu
-    end
 
-    optim = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
-    opts = Optimisers.setup(optim, m)
+    # Parameter and State Variables
+    rng = Xoshiro(config.seed)
+    ps, st = Lux.setup(rng, m.chain) |> dev
+    opt = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
+    # ts = Training.TrainState(m.chain, ps, st, opt)
 
-    cache = (dtrain=dtrain, loss=loss, opts=opts, info=info)
+    cache = (data=data, ps=ps, st=st, opt=opt, info=info)
     return m, cache
 end
-
 
 """
     function fit(
@@ -115,11 +121,6 @@ function fit(
     verbosity=1
 )
 
-    device = Symbol(config.device)
-    if device == :gpu
-        CUDA.device!(config.gpuID)
-    end
-
     feature_names = Symbol.(feature_names)
     target_name = Symbol(target_name)
     weight_name = isnothing(weight_name) ? nothing : Symbol(weight_name)
@@ -138,9 +139,22 @@ function fit(
         (verbosity > 0) && @info "Init training"
     end
 
-    # for iter = 1:config.nrounds
+    ts = Training.TrainState(m.chain, cache[:ps], cache[:st], cache[:opt])
     while m.info[:nrounds] < config.nrounds
-        fit_iter!(m, cache)
+        # fit_iter!(m, cache[:ts], cache[:data])
+        # ts, data = cache[:ts], cache[:data]
+        for d in cache[:data]
+            gs, loss, stats, ts = Training.single_train_step!(
+                AutoEnzyme(),
+                # MSELoss(),
+                BinaryCrossEntropyLoss(; logits=Val(true)),
+                (d[1], d[2]),
+                ts
+            )
+            @info "loss: $loss"
+        end
+        m.info[:nrounds] += 1
+
         iter = m.info[:nrounds]
         if !isnothing(logger)
             cb(logger, iter, m)
@@ -148,22 +162,23 @@ function fit(
                 @info "iter $iter" metric = logger[:metrics][:metric][end]
             end
             (logger[:iter_since_best] >= logger[:early_stopping_rounds]) && break
+        else
+            (verbosity > 0 && iter % print_every_n == 0) && @info "iter $iter"
         end
     end
-
     m.info[:logger] = logger
-    return m |> cpu
+    return m
 end
 
-function fit_iter!(m, cache)
-    loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-    GC.gc(true)
-    if typeof(cache[:dtrain]) <: CUDA.CuIterator
-        CUDA.reclaim()
-    end
+function fit_iter!(m, ts, data)
+    # ts, data = cache[:ts], cache[:data]
     for d in data
-        grads = gradient(model -> loss(model, d...), m)[1]
-        Optimisers.update!(opts, m, grads)
+        gs, loss, stats, ts = Training.single_train_step!(
+            AutoEnzyme(),
+            MSELoss(),
+            (d[1], d[2]),
+            ts
+        )
     end
     m.info[:nrounds] += 1
     return nothing

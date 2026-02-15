@@ -2,13 +2,17 @@ module NeuroTrees
 
 export NeuroTreeConfig
 
+using Random
 import .Threads: @threads
-using CUDA
 
-import Flux
-import Flux: @layer, trainmode!, gradient, Chain, DataLoader, cpu, gpu
-import Flux: relu, logσ, logsoftmax, softmax, softmax!, sigmoid, sigmoid_fast, hardsigmoid, tanh, tanh_fast, hardtanh, softplus, onecold, onehotbatch, glorot_uniform
-import Flux: BatchNorm, Dense, Dropout, MultiHeadAttention, Parallel
+# using CUDA
+# import Flux
+# import Flux: @layer, trainmode!, gradient, Chain, DataLoader, cpu, gpu
+# import Flux: relu, logσ, logsoftmax, softmax, softmax!, sigmoid, sigmoid_fast, hardsigmoid, tanh, tanh_fast, hardtanh, softplus, onecold, onehotbatch, glorot_uniform
+# import Flux: BatchNorm, Dense, Dropout, MultiHeadAttention, Parallel
+
+using Lux
+using NNlib: softplus, sigmoid, sigmoid_fast, hardsigmoid, tanh, tanh_fast, hardtanh
 
 import ..Losses: get_loss_type, GaussianMLE
 import ..Models: Architecture
@@ -106,20 +110,29 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
             )
         )
     else
+        # chain = Chain(
+        #     BatchNorm(nfeats),
+        #     StackTree(nfeats => outsize;
+        #         tree_type=config.tree_type,
+        #         depth=config.depth,
+        #         ntrees=config.ntrees,
+        #         proj_size=config.proj_size,
+        #         stack_size=config.stack_size,
+        #         hidden_size=config.hidden_size,
+        #         actA=act_dict[config.actA],
+        #         scaler=config.scaler,
+        #         init_scale=config.init_scale)
+        # )
         chain = Chain(
-            BatchNorm(nfeats),
-            StackTree(nfeats => outsize;
+            # BatchNorm(nfeats),
+            NeuroTree(nfeats => outsize;
                 tree_type=config.tree_type,
                 depth=config.depth,
-                ntrees=config.ntrees,
-                proj_size=config.proj_size,
-                stack_size=config.stack_size,
-                hidden_size=config.hidden_size,
+                trees=config.ntrees,
                 actA=act_dict[config.actA],
                 scaler=config.scaler,
-                init_scale=config.init_scale)
+                init_scale=config.init_scale),
         )
-
     end
 end
 
@@ -150,6 +163,5 @@ const act_dict = Dict(
     :tanh => _tanh_act,
     :hardtanh => _hardtanh_act,
 )
-
 
 end
