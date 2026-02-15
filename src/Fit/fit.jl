@@ -1,6 +1,6 @@
 module Fit
 
-export fit
+export fit, fit_iter!
 
 using ..Data
 using ..Learners
@@ -10,18 +10,49 @@ using ..Metrics
 
 import Random: Xoshiro
 import MLJModelInterface: fit
-import CUDA, cuDNN
-import Optimisers
-import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
+import Optimisers: OptimiserChain, WeightDecay, NAdam
+import OneHotArrays: onehotbatch
 
 using Lux
-using Enzyme, Reactant
+using Reactant
+using Lux: cpu_device, reactant_device
 
 using DataFrames
 using CategoricalArrays
 
 include("callback.jl")
 using .CallBacks
+
+function _get_device(config)
+    device = Symbol(config.device)
+    if device == :gpu
+        try
+            Reactant.set_default_backend("gpu")
+            return reactant_device()
+        catch
+            @warn "GPU not available, falling back to CPU"
+            Reactant.set_default_backend("cpu")
+            return reactant_device()
+        end
+    else
+        Reactant.set_default_backend("cpu")
+        return reactant_device()
+    end
+end
+
+function _get_lux_loss(L)
+    if L <: MSE
+        return MSELoss()
+    elseif L <: MAE
+        return MAELoss()
+    elseif L <: LogLoss
+        return BinaryCrossEntropyLoss(; logits=Val(true))
+    elseif L <: MLogLoss
+        return CrossEntropyLoss(; logits=Val(true))
+    else
+        return MSELoss()
+    end
+end
 
 function init(
     config::LearnerTypes,
@@ -31,12 +62,12 @@ function init(
     weight_name=nothing,
     offset_name=nothing,
 )
+    dev = _get_device(config)
 
-    device = config.device
     batchsize = config.batchsize
     nfeats = length(feature_names)
-    loss = get_loss_fn(config.loss)
     L = get_loss_type(config.loss)
+    lux_loss = _get_lux_loss(L)
 
     target_levels = nothing
     target_isordered = false
@@ -50,11 +81,19 @@ function init(
         outsize = 2
     end
 
-    Reactant.set_default_backend("gpu")
-    dev = reactant_device()
-    # dev = cpu_device()
-    # dev = gpu_device()
-    data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device) |> dev
+    dtrain_loader = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize)
+    all_batches = collect(dtrain_loader)
+
+    # One-hot encode targets for multiclass classification
+    if L <: MLogLoss
+        all_batches = map(all_batches) do batch
+            x = batch[1]
+            y_oh = Float32.(onehotbatch(vec(batch[2]), UInt32(1):UInt32(outsize)))
+            length(batch) > 2 ? (x, y_oh, batch[3:end]...) : (x, y_oh)
+        end
+    end
+
+    data = all_batches |> dev
 
     info = Dict(
         :nrounds => 0,
@@ -65,30 +104,30 @@ function init(
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
 
-    # Parameter and State Variables
     rng = Xoshiro(config.seed)
     ps, st = Lux.setup(rng, m.chain) |> dev
     opt = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
+    ts = Training.TrainState(m.chain, ps, st, opt)
 
-    cache = (data=data, ps=ps, st=st, opt=opt, info=info)
+    cache = Dict(
+        :data => data,
+        :lux_loss => lux_loss,
+        :train_state => ts,
+    )
     return m, cache
 end
 
 """
     function fit(
-        config::NeuroTypes,
+        config::LearnerTypes,
         dtrain;
         feature_names,
         target_name,
         weight_name=nothing,
         offset_name=nothing,
         deval=nothing,
-        metric=nothing,
         print_every_n=9999,
-        early_stopping_rounds=9999,
         verbosity=1,
-        device=:cpu,
-        gpuID=0,
     )
 
 Training function of NeuroTabModels' internal API.
@@ -96,15 +135,15 @@ Training function of NeuroTabModels' internal API.
 # Arguments
 
 - `config::LearnerTypes`
-- `dtrain`: Must be `<:AbstractDataFrame`  
+- `dtrain`: Must be `<:AbstractDataFrame`
 
 # Keyword arguments
 
 - `feature_names`:          Required kwarg, a `Vector{Symbol}` or `Vector{String}` of the feature names.
-- `target_name`             Required kwarg, a `Symbol` or `String` indicating the name of the target variable.  
+- `target_name`:            Required kwarg, a `Symbol` or `String` indicating the name of the target variable.
 - `weight_name=nothing`
 - `offset_name=nothing`
-- `deval=nothing`           Data for tracking evaluation metric and perform early stopping.
+- `deval=nothing`:          Data for tracking evaluation metric and perform early stopping.
 - `print_every_n=9999`
 - `verbosity=1`
 """
@@ -127,32 +166,23 @@ function fit(
 
     m, cache = init(config, dtrain; feature_names, target_name, weight_name, offset_name)
 
-    # initialize callback and logger if tracking eval data
     logger = nothing
     if !isnothing(deval)
         cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)
         logger = init_logger(config)
+        _sync_params_to_model!(m, cache)
         cb(logger, 0, m)
         (verbosity > 0) && @info "Init training" metric = logger[:metrics][end]
     else
         (verbosity > 0) && @info "Init training"
     end
 
-    ts = Training.TrainState(m.chain, cache[:ps], cache[:st], cache[:opt])
     while m.info[:nrounds] < config.nrounds
-        for d in cache[:data]
-            gs, loss, stats, ts = Training.single_train_step!(
-                AutoEnzyme(),
-                MSELoss(),
-                # BinaryCrossEntropyLoss(; logits=Val(true)),
-                (d[1], d[2]),
-                ts
-            )
-        end
-        m.info[:nrounds] += 1
-
+        fit_iter!(m, cache)
         iter = m.info[:nrounds]
+
         if !isnothing(logger)
+            _sync_params_to_model!(m, cache)
             cb(logger, iter, m)
             if verbosity > 0 && iter % print_every_n == 0
                 @info "iter $iter" metric = logger[:metrics][:metric][end]
@@ -162,8 +192,32 @@ function fit(
             (verbosity > 0 && iter % print_every_n == 0) && @info "iter $iter"
         end
     end
+
+    _sync_params_to_model!(m, cache)
     m.info[:logger] = logger
     return m
+end
+
+function _sync_params_to_model!(m, cache)
+    ts = cache[:train_state]
+    cdev = cpu_device()
+    m.info[:ps] = cdev(ts.parameters)
+    m.info[:st] = cdev(Lux.testmode(ts.states))
+end
+
+function fit_iter!(m, cache)
+    ts = cache[:train_state]
+    lux_loss = cache[:lux_loss]
+
+    for d in cache[:data]
+        _, loss, _, ts = Training.single_train_step!(
+            AutoEnzyme(), lux_loss, (d[1], d[2]), ts
+        )
+    end
+
+    cache[:train_state] = ts
+    m.info[:nrounds] += 1
+    return nothing
 end
 
 end

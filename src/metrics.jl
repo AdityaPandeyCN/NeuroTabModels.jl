@@ -3,7 +3,8 @@ module Metrics
 export metric_dict, is_maximise
 
 import Statistics: mean, std
-import Flux: logσ, logsoftmax, softmax, relu, hardsigmoid, onehotbatch
+import NNlib: logsigmoid, logsoftmax, softmax, relu, hardsigmoid
+import OneHotArrays: onehotbatch
 
 """
     mse(x, y; agg=mean)
@@ -49,17 +50,17 @@ end
 """
 function logloss(m, x, y; agg=mean)
     p = m(x)
-    metric = agg((1 .- y) .* p .- logσ.(p))
+    metric = agg((1 .- y) .* p .- logsigmoid.(p))
     return metric
 end
 function logloss(m, x, y, w; agg=mean)
     p = m(x)
-    metric = agg(((1 .- y) .* p .- logσ.(p)) .* w)
+    metric = agg(((1 .- y) .* p .- logsigmoid.(p)) .* w)
     return metric
 end
 function logloss(m, x, y, w, offset; agg=mean)
     p = m(x) .+ offset
-    metric = agg(((1 .- y) .* p .- logσ.(p)) .* w)
+    metric = agg(((1 .- y) .* p .- logsigmoid.(p)) .* w)
     return metric
 end
 
@@ -100,25 +101,24 @@ end
 function mlogloss(m, x, y; agg=mean)
     p = logsoftmax(m(x); dims=1)
     k = size(p, 1)
-    raw = dropdims(-sum(onehotbatch(y, 1:k) .* p; dims=1); dims=1)
+    raw = dropdims(-sum(onehotbatch(vec(y), UInt32(1):UInt32(k)) .* p; dims=1); dims=1)
     metric = agg(raw)
     return metric
 end
 function mlogloss(m, x, y, w; agg=mean)
     p = logsoftmax(m(x); dims=1)
     k = size(p, 1)
-    raw = dropdims(-sum(onehotbatch(y, 1:k) .* p; dims=1); dims=1)
+    raw = dropdims(-sum(onehotbatch(vec(y), UInt32(1):UInt32(k)) .* p; dims=1); dims=1)
     metric = agg(raw .* w)
     return metric
 end
 function mlogloss(m, x, y, w, offset; agg=mean)
     p = logsoftmax(m(x) .+ offset; dims=1)
     k = size(p, 1)
-    raw = dropdims(-sum(onehotbatch(y, 1:k) .* p; dims=1); dims=1)
+    raw = dropdims(-sum(onehotbatch(vec(y), UInt32(1):UInt32(k)) .* p; dims=1); dims=1)
     metric = agg(raw .* w)
     return metric
 end
-
 
 """
     gaussian_mle(μ::T, σ::T, y::T, w::T) where {T<:AbstractFloat}

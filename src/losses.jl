@@ -4,7 +4,8 @@ export get_loss_fn, get_loss_type
 export LossType, MSE, MAE, LogLoss, MLogLoss, GaussianMLE, Tweedie
 
 import Statistics: mean, std
-import Flux: logσ, logsoftmax, softmax, relu, hardsigmoid, onehotbatch
+import NNlib: logsigmoid, logsoftmax, softmax, relu, hardsigmoid
+import OneHotArrays: onehotbatch
 
 abstract type LossType end
 abstract type MSE <: LossType end
@@ -36,15 +37,15 @@ end
 
 function logloss(m, x, y)
     p = m(x)
-    mean((1 .- y) .* p .- logσ.(p))
+    mean((1 .- y) .* p .- logsigmoid.(p))
 end
 function logloss(m, x, y, w)
     p = m(x)
-    sum(w .* ((1 .- y) .* p .- logσ.(p))) / sum(w)
+    sum(w .* ((1 .- y) .* p .- logsigmoid.(p))) / sum(w)
 end
 function logloss(m, x, y, w, offset)
     p = m(x) .+ offset
-    sum(w .* ((1 .- y) .* p .- logσ.(p))) / sum(w)
+    sum(w .* ((1 .- y) .* p .- logsigmoid.(p))) / sum(w)
 end
 
 function tweedie(m, x, y)
@@ -72,17 +73,17 @@ end
 function mlogloss(m, x, y)
     p = logsoftmax(m(x); dims=1)
     k = size(p, 1)
-    mean(-sum(onehotbatch(y, 1:k) .* p; dims=1))
+    mean(-sum(onehotbatch(vec(y), UInt32(1):UInt32(k)) .* p; dims=1))
 end
 function mlogloss(m, x, y, w)
     p = logsoftmax(m(x); dims=1)
     k = size(p, 1)
-    sum(-sum(onehotbatch(y, 1:k) .* p; dims=1) .* w) / sum(w)
+    sum(-sum(onehotbatch(vec(y), UInt32(1):UInt32(k)) .* p; dims=1) .* w) / sum(w)
 end
 function mlogloss(m, x, y, w, offset)
     p = logsoftmax(m(x) .+ offset; dims=1)
     k = size(p, 1)
-    sum(-sum(onehotbatch(y, 1:k) .* p; dims=1) .* w) / sum(w)
+    sum(-sum(onehotbatch(vec(y), UInt32(1):UInt32(k)) .* p; dims=1) .* w) / sum(w)
 end
 
 gaussian_mle_loss(μ::AbstractVector{T}, σ::AbstractVector{T}, y::AbstractVector{T}) where {T} =

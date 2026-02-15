@@ -2,8 +2,6 @@ module CallBacks
 
 using DataFrames
 using Statistics: mean, median
-using Flux: cpu, gpu
-using CUDA: CuIterator
 
 using ..Learners: LearnerTypes
 using ..Data: get_df_loader_train
@@ -30,11 +28,9 @@ function CallBack(
     weight_name=nothing,
     offset_name=nothing
 )
-
-    device = config.device
     batchsize = config.batchsize
     feval = metric_dict[config.metric]
-    deval = get_df_loader_train(deval; feature_names, target_name, weight_name, offset_name, batchsize, device)
+    deval = get_df_loader_train(deval; feature_names, target_name, weight_name, offset_name, batchsize)
     return CallBack(feval, deval)
 end
 
@@ -71,14 +67,11 @@ function update_logger!(logger; iter, metric)
 end
 
 function agg_logger(logger_raw::Vector{Dict})
-
     _l1 = first(logger_raw)
     best_iters = [d[:best_iter] for d in logger_raw]
     best_iter = ceil(Int, median(best_iters))
-
     best_metrics = [d[:best_metric] for d in logger_raw]
     best_metric = last(best_metrics)
-
     metrics = (layer=Int[], iter=Int[], metric=Float64[])
     for i in eachindex(logger_raw)
         _l = logger_raw[i]
@@ -86,7 +79,6 @@ function agg_logger(logger_raw::Vector{Dict})
         append!(metrics[:iter], _l[:metrics][:iter])
         append!(metrics[:metric], _l[:metrics][:metric])
     end
-
     logger = Dict(
         :name => _l1[:name],
         :maximise => _l1[:maximise],
@@ -97,7 +89,6 @@ function agg_logger(logger_raw::Vector{Dict})
         :best_metrics => best_metrics,
         :best_metric => best_metric,
     )
-
     return logger
 end
 
