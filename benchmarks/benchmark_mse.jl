@@ -6,7 +6,7 @@ using Random: seed!
 Threads.nthreads()
 
 seed!(123)
-nobs = Int(1e5)
+nobs = Int(1e6)
 num_feat = Int(100)
 @info "testing with: $nobs observations | $num_feat features."
 X = rand(Float32, nobs, num_feat)
