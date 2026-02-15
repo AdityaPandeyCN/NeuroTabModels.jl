@@ -50,7 +50,7 @@ function init(
         outsize = 2
     end
 
-    Reactant.set_default_backend("gpu")
+    Reactant.set_default_backend("cpu")
     dev = reactant_device()
     # dev = gpu_device()
     # dev = cpu_device()
@@ -69,7 +69,6 @@ function init(
     rng = Xoshiro(config.seed)
     ps, st = Lux.setup(rng, m.chain) |> dev
     opt = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
-    # ts = Training.TrainState(m.chain, ps, st, opt)
 
     cache = (data=data, ps=ps, st=st, opt=opt, info=info)
     return m, cache
@@ -141,17 +140,14 @@ function fit(
 
     ts = Training.TrainState(m.chain, cache[:ps], cache[:st], cache[:opt])
     while m.info[:nrounds] < config.nrounds
-        # fit_iter!(m, cache[:ts], cache[:data])
-        # ts, data = cache[:ts], cache[:data]
         for d in cache[:data]
             gs, loss, stats, ts = Training.single_train_step!(
                 AutoEnzyme(),
-                # MSELoss(),
-                BinaryCrossEntropyLoss(; logits=Val(true)),
+                MSELoss(),
+                # BinaryCrossEntropyLoss(; logits=Val(true)),
                 (d[1], d[2]),
                 ts
             )
-            @info "loss: $loss"
         end
         m.info[:nrounds] += 1
 
@@ -170,18 +166,18 @@ function fit(
     return m
 end
 
-function fit_iter!(m, ts, data)
-    # ts, data = cache[:ts], cache[:data]
-    for d in data
-        gs, loss, stats, ts = Training.single_train_step!(
-            AutoEnzyme(),
-            MSELoss(),
-            (d[1], d[2]),
-            ts
-        )
-    end
-    m.info[:nrounds] += 1
-    return nothing
-end
+# function fit_iter!(m, ts, data)
+#     # ts, data = cache[:ts], cache[:data]
+#     for d in data
+#         gs, loss, stats, ts = Training.single_train_step!(
+#             AutoEnzyme(),
+#             MSELoss(),
+#             (d[1], d[2]),
+#             ts
+#         )
+#     end
+#     m.info[:nrounds] += 1
+#     return nothing
+# end
 
 end
