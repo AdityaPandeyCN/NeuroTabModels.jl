@@ -16,7 +16,6 @@ end
 # nw = m.d_proj(h) # [H,NTB] => [1,NTB]
 # nw = reshape(nw, size(m.lmask, 2), :) # [1,NTB] => [N,TB]
 function (m::NeuroTree)(x)
-    nw = m.w * x .+ m.b # [F,B] => [NT,B]
     if m.scaler
         nw = softplus(m.s) .* (m.actA(m.w) * x .+ m.b) # [F,B] => [NT,B]
     else
