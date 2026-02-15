@@ -52,9 +52,8 @@ function init(
 
     Reactant.set_default_backend("gpu")
     dev = reactant_device()
-    @info "dev" dev
-    # dev = gpu_device()
     # dev = cpu_device()
+    # dev = gpu_device()
     data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device) |> dev
 
     info = Dict(
@@ -166,19 +165,5 @@ function fit(
     m.info[:logger] = logger
     return m
 end
-
-# function fit_iter!(m, ts, data)
-#     # ts, data = cache[:ts], cache[:data]
-#     for d in data
-#         gs, loss, stats, ts = Training.single_train_step!(
-#             AutoEnzyme(),
-#             MSELoss(),
-#             (d[1], d[2]),
-#             ts
-#         )
-#     end
-#     m.info[:nrounds] += 1
-#     return nothing
-# end
 
 end
