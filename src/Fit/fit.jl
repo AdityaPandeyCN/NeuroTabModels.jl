@@ -145,12 +145,7 @@ function fit(
     # for iter = 1:config.nrounds
     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
     while m.info[:nrounds] < config.nrounds
-        # fit_iter!(m, cache)
-        for d in data
-            grads = gradient(model -> loss(model, d...), m)[1]
-            Optimisers.update!(opts, m, grads)
-        end
-        m.info[:nrounds] += 1
+        fit_iter!(m, cache)
         iter = m.info[:nrounds]
 
         if !isnothing(logger)
@@ -166,14 +161,14 @@ function fit(
     return m |> cpu
 end
 
-# function fit_iter!(m, cache)
-#     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-#     for d in data
-#         grads = gradient(model -> loss(model, d...), m)[1]
-#         Optimisers.update!(opts, m, grads)
-#     end
-#     m.info[:nrounds] += 1
-#     return nothing
-# end
+function fit_iter!(m, cache)
+    loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
+    for d in data
+        grads = gradient(model -> loss(model, d...), m)[1]
+        Optimisers.update!(opts, m, grads)
+    end
+    m.info[:nrounds] += 1
+    return nothing
+end
 
 end
