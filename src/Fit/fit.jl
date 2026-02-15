@@ -1,6 +1,6 @@
 module Fit
 
-export fit, _sync_to_cpu!
+export fit, _sync_to_cpu!, fit_iter!
 
 using ..Data
 using ..Learners
@@ -12,25 +12,39 @@ import MLJModelInterface: fit
 import Reactant
 import Reactant: ConcreteRArray, ConcreteRNumber
 import Optimisers
-import Optimisers: OptimiserChain, WeightDecay, Momentum, Nesterov, Descent, Adam, NAdam
+import Optimisers: OptimiserChain, WeightDecay, Adam
 import Flux
 import Flux: onehotbatch
 import ADTypes: AutoEnzyme
 import Functors: fmap
-import NNlib: pad_constant
 
 using DataFrames
 using CategoricalArrays
-using NNlib: pad_constant
 
 include("callback.jl")
 using .CallBacks
 
 function _to_rarray_with_scalars(x)
-    return fmap(x; exclude=v -> v isa AbstractArray{<:Number} || v isa Number) do v
-        if v isa AbstractArray{<:Number}
+    return fmap(x; exclude=v -> v isa Flux.BatchNorm || v isa AbstractArray{<:Number} || v isa Number) do v
+        if v isa Flux.BatchNorm
+            Flux.BatchNorm(
+                v.λ,
+                _to_rarray_with_scalars(v.β),
+                _to_rarray_with_scalars(v.γ),
+                _to_rarray_with_scalars(v.μ),
+                _to_rarray_with_scalars(v.σ²),
+                ConcreteRNumber(Float32(v.ϵ)),
+                ConcreteRNumber(Float32(v.momentum)),
+                v.affine,
+                v.track_stats,
+                v.active,
+                v.chs
+            )
+        elseif v isa AbstractArray{<:Number}
             ConcreteRArray(v)
         elseif v isa Bool
+            v
+        elseif v isa Integer
             v
         elseif v isa Number
             ConcreteRNumber(Float32(v))
@@ -72,8 +86,6 @@ function init(
     weight_name=nothing,
     offset_name=nothing,
 )
-
-    # Set Reactant backend based on device config
     device = Symbol(config.device)
     Reactant.set_default_backend(device == :gpu ? "gpu" : "cpu")
 
@@ -108,20 +120,21 @@ function init(
     optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
     opts = Optimisers.setup(optim, m)
 
-    chain_ra = Reactant.to_rarray(m.chain)
+    chain_ra = _to_rarray_with_scalars(m.chain)
     m_ra = NeuroTabModel(m._loss_type, chain_ra, Dict{Symbol,Any}())
     opts_ra = _to_rarray_with_scalars(opts)
 
     all_batches = collect(dtrain)
 
-    # Pad last batch to full size if partial
     full_batchsize = size(all_batches[1][1], ndims(all_batches[1][1]))
     last_batchsize = size(all_batches[end][1], ndims(all_batches[end][1]))
     if last_batchsize < full_batchsize
         pad_size = full_batchsize - last_batchsize
-        all_batches[end] = map(all_batches[end]) do b
-            pad_constant(b, (0, pad_size), Float32(0); dims=ndims(b))
-        end
+        all_batches[end] = Tuple(
+            map(all_batches[end]) do b
+                cat(b, selectdim(b, ndims(b), 1:pad_size); dims=ndims(b))
+            end
+        )
     end
 
     batches_ra = _to_batches_ra(all_batches, L, outsize)
@@ -141,16 +154,14 @@ end
 
 """
     function fit(
-        config::NeuroTypes,
+        config::LearnerTypes,
         dtrain;
         feature_names,
         target_name,
         weight_name=nothing,
         offset_name=nothing,
         deval=nothing,
-        metric=nothing,
         print_every_n=9999,
-        early_stopping_rounds=9999,
         verbosity=1,
     )
 
@@ -159,19 +170,18 @@ Training function of NeuroTabModels' internal API.
 # Arguments
 
 - `config::LearnerTypes`
-- `dtrain`: Must be `<:AbstractDataFrame`  
+- `dtrain`: Must be `<:AbstractDataFrame`
 
 # Keyword arguments
 
 - `feature_names`:          Required kwarg, a `Vector{Symbol}` or `Vector{String}` of the feature names.
-- `target_name`             Required kwarg, a `Symbol` or `String` indicating the name of the target variable.  
+- `target_name`:            Required kwarg, a `Symbol` or `String` indicating the name of the target variable.
 - `weight_name=nothing`
 - `offset_name=nothing`
-- `deval=nothing`           Data for tracking evaluation metric and perform early stopping.
+- `deval=nothing`:          Data for tracking evaluation metric and perform early stopping.
 - `print_every_n=9999`
 - `verbosity=1`
 """
-
 function fit(
     config::LearnerTypes,
     dtrain;
@@ -204,6 +214,7 @@ function fit(
     while m.info[:nrounds] < config.nrounds
         fit_iter!(m, cache)
         iter = m.info[:nrounds]
+
         if !isnothing(logger)
             _sync_to_cpu!(m, cache)
             cb(logger, iter, m)

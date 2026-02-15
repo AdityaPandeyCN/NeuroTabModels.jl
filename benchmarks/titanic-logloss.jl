@@ -9,7 +9,7 @@ using OrderedCollections
 using NeuroTabModels
 
 using Reactant
-Reactant.set_default_backend("gpu")
+Reactant.set_default_backend("cpu")
 
 Random.seed!(123)
 
