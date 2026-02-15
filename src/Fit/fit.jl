@@ -50,8 +50,9 @@ function init(
         outsize = 2
     end
 
-    Reactant.set_default_backend("cpu")
+    Reactant.set_default_backend("gpu")
     dev = reactant_device()
+    @info "dev" dev
     # dev = gpu_device()
     # dev = cpu_device()
     data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device) |> dev

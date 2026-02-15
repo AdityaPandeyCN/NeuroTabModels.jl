@@ -124,7 +124,7 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
         #         init_scale=config.init_scale)
         # )
         chain = Chain(
-            # BatchNorm(nfeats),
+            BatchNorm(nfeats),
             NeuroTree(nfeats => outsize;
                 tree_type=config.tree_type,
                 depth=config.depth,
