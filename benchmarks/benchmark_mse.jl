@@ -4,7 +4,7 @@ using BenchmarkTools
 using Random: seed!
 
 using Reactant
-Reactant.set_default_backend("cpu")
+Reactant.set_default_backend("gpu")
 
 Threads.nthreads()
 
