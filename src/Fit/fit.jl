@@ -24,20 +24,9 @@ include("callback.jl")
 using .CallBacks
 
 function _get_device(config)
-    device = Symbol(config.device)
-    if device == :gpu
-        try
-            Reactant.set_default_backend("gpu")
-            return reactant_device()
-        catch
-            @warn "GPU not available, falling back to CPU"
-            Reactant.set_default_backend("cpu")
-            return reactant_device()
-        end
-    else
-        Reactant.set_default_backend("cpu")
-        return reactant_device()
-    end
+    backend = config.device == :gpu ? "gpu" : "cpu"
+    Reactant.set_default_backend(backend)
+    return reactant_device()
 end
 
 function _get_lux_loss(L)
