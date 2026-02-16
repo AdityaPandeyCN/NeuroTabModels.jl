@@ -88,7 +88,8 @@ function init(
         :nrounds => 0,
         :feature_names => feature_names,
         :target_levels => target_levels,
-        :target_isordered => target_isordered)
+        :target_isordered => target_isordered,
+        :device => config.device)
 
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
@@ -155,6 +156,7 @@ function fit(
 
     m, cache = init(config, dtrain; feature_names, target_name, weight_name, offset_name)
 
+    # initialize callback and logger if tracking eval data
     logger = nothing
     if !isnothing(deval)
         cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)

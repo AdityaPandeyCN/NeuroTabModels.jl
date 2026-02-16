@@ -1,5 +1,5 @@
 @testset "Core - data iterators" begin
-    
+
 end
 
 @testset "Core - internals test" begin
@@ -36,7 +36,6 @@ end
     )
     m = NeuroTabModel(L, chain, info)
 
-
 end
 
 @testset "Core - Regression" begin
@@ -64,6 +63,7 @@ end
         lr=1e-1,
     )
 
+    # Test without eval data
     m = NeuroTabModels.fit(
         learner,
         dtrain;
@@ -71,6 +71,13 @@ end
         feature_names
     )
 
+    # Test inference output
+    p = m(dtrain)
+    @test p isa Vector{Float32}
+    @test length(p) == nrow(dtrain)
+    @test all(isfinite, p)
+
+    # Test with eval data and early stopping
     m = NeuroTabModels.fit(
         learner,
         dtrain;
@@ -78,6 +85,17 @@ end
         feature_names,
         deval,
     )
+
+    # Test eval metric was tracked
+    @test haskey(m.info, :logger)
+    @test !isnothing(m.info[:logger])
+    @test length(m.info[:logger][:metrics][:metric]) > 0
+
+    # Test inference on eval data
+    peval = m(deval)
+    @test peval isa Vector{Float32}
+    @test length(peval) == nrow(deval)
+    @test all(isfinite, peval)
 
 end
 
@@ -114,7 +132,22 @@ end
         feature_names,
     )
 
-    # Predictions depend on the number of samples in the dataset
+    # Test inference output shape and properties
+    p_cls = m(dtrain)
+    nclasses = length(levels(dtrain.class))
+    @test p_cls isa Matrix{Float32}
+    @test size(p_cls) == (nrow(dtrain), nclasses)
+    @test all(isfinite, p_cls)
+    @test all(sum(p_cls; dims=2) .≈ 1.0)  # softmax rows sum to 1
+
+    # Test eval metric was tracked and decreased
+    @test haskey(m.info, :logger)
+    @test !isnothing(m.info[:logger])
+    metrics = m.info[:logger][:metrics][:metric]
+    @test length(metrics) > 1
+    @test metrics[end] < metrics[1]  # loss decreased from init
+
+    # Test prediction accuracy
     ptrain = [argmax(x) for x in eachrow(m(dtrain))]
     peval = [argmax(x) for x in eachrow(m(deval))]
     @test mean(ptrain .== levelcode.(dtrain.class)) > 0.95
