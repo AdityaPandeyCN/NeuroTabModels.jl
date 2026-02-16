@@ -16,6 +16,8 @@ import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, 
 
 using Lux
 using Enzyme, Reactant
+# using Zygote
+# using Mooncake
 
 using DataFrames
 using CategoricalArrays
@@ -35,8 +37,10 @@ function init(
     device = config.device
     batchsize = config.batchsize
     nfeats = length(feature_names)
-    loss = get_loss_fn(config.loss)
     L = get_loss_type(config.loss)
+    # loss = get_loss_fn(config.loss)
+    loss = MSELoss()
+    # loss = BinaryCrossEntropyLoss(; logits=Val(true)),
 
     target_levels = nothing
     target_isordered = false
@@ -52,8 +56,12 @@ function init(
 
     Reactant.set_default_backend("gpu")
     dev = reactant_device()
+    backend = AutoReactant()
     # dev = cpu_device()
     # dev = gpu_device()
+    # backend = AutoZygote()
+    # backend = AutoMooncake()
+
     data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device) |> dev
 
     info = Dict(
@@ -69,8 +77,9 @@ function init(
     rng = Xoshiro(config.seed)
     ps, st = Lux.setup(rng, m.chain) |> dev
     opt = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
+    ts = Training.TrainState(m.chain, ps, st, opt)
 
-    cache = (data=data, ps=ps, st=st, opt=opt, info=info)
+    cache = (data=data, ts=ts, loss=loss, backend=backend, info=info)
     return m, cache
 end
 
@@ -138,13 +147,12 @@ function fit(
         (verbosity > 0) && @info "Init training"
     end
 
-    ts = Training.TrainState(m.chain, cache[:ps], cache[:st], cache[:opt])
+    ts = cache[:ts]
     while m.info[:nrounds] < config.nrounds
         for d in cache[:data]
             gs, loss, stats, ts = Training.single_train_step!(
-                AutoEnzyme(),
-                MSELoss(),
-                # BinaryCrossEntropyLoss(; logits=Val(true)),
+                cache.backend,
+                cache.loss,
                 (d[1], d[2]),
                 ts
             )
@@ -163,7 +171,7 @@ function fit(
         end
     end
     m.info[:logger] = logger
-    return m
+    return m, ts
 end
 
 end

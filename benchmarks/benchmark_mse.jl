@@ -43,9 +43,10 @@ learner = NeuroTabRegressor(
     device=:gpu
 )
 
-# desktop gpu: 13.476383 seconds (26.42 M allocations: 5.990 GiB, 9.44% gc time)
+# Reactant GPU: 5.970480 seconds (2.33 M allocations: 5.242 GiB, 3.80% gc time, 0.00% compilation time)
+# Zygote GPU: 9.855853 seconds (27.92 M allocations: 6.005 GiB, 3.58% gc time)
 #  13.557744 seconds (26.40 M allocations: 5.989 GiB, 9.60% gc time)
-@time m = NeuroTabModels.fit(
+@time m, ts = NeuroTabModels.fit(
     learner,
     dtrain;
     target_name,
