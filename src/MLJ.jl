@@ -71,14 +71,12 @@ function update(
 end
 
 function predict(::NeuroTabRegressor, fitresult, A)
-  df = DataFrame(A)
   Tables.istable(A) ? df = DataFrame(A) : error("`A` must be a Table")
   pred = fitresult(df)
   return pred
 end
 
 function predict(::NeuroTabClassifier, fitresult, A)
-  df = DataFrame(A)
   Tables.istable(A) ? df = DataFrame(A) : error("`A` must be a Table")
   pred = fitresult(df)
   return MMI.UnivariateFinite(fitresult.info[:target_levels], pred)
