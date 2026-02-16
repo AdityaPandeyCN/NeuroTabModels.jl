@@ -3,7 +3,8 @@ module MLJ
 using Tables
 using DataFrames
 import ..Learners: NeuroTabRegressor, NeuroTabClassifier, LearnerTypes
-import ..Fit: init, fit_iter!, _sync_params_to_model!
+import ..Fit
+import ..Fit: init, fit_iter!, _sync_to_cpu!, _run_compiled_loop!
 import MLJModelInterface as MMI
 import MLJModelInterface: fit, update, predict, schema
 
@@ -33,10 +34,9 @@ function fit(
 
     fitresult, cache = init(model, dtrain; feature_names, target_name, weight_name, offset_name)
 
-    while fitresult.info[:nrounds] < model.nrounds
-        fit_iter!(fitresult, cache)
-    end
-    _sync_params_to_model!(fitresult, cache)
+    # Use the optimized chunked loop
+    _run_compiled_loop!(fitresult, cache, model.nrounds)
+    _sync_to_cpu!(fitresult, cache)
 
     report = (features=fitresult.info[:feature_names],)
     return fitresult, cache, report
@@ -58,10 +58,14 @@ function update(
     w=nothing,
 )
     if okay_to_continue(model, fitresult, cache)
-        while fitresult.info[:nrounds] < model.nrounds
-            fit_iter!(fitresult, cache)
+        rounds_to_add = model.nrounds - fitresult.info[:nrounds]
+        
+        if rounds_to_add > 0
+            # Optimized update using chunked loop
+            _run_compiled_loop!(fitresult, cache, rounds_to_add)
         end
-        _sync_params_to_model!(fitresult, cache)
+        
+        _sync_to_cpu!(fitresult, cache)
         report = (features=fitresult.info[:feature_names],)
     else
         fitresult, cache, report = fit(model, verbosity, A, y, w)
@@ -81,7 +85,7 @@ function predict(::NeuroTabClassifier, fitresult, A)
     return MMI.UnivariateFinite(fitresult.info[:target_levels], pred)
 end
 
-# Metadata
+# Metadata (Unchanged)
 MMI.metadata_pkg.(
     (NeuroTabRegressor, NeuroTabClassifier),
     name="NeuroTabModels",
