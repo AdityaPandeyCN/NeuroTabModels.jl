@@ -14,8 +14,14 @@ import Optimisers: OptimiserChain, WeightDecay, NAdam
 import OneHotArrays: onehotbatch
 
 using Lux
+<<<<<<< HEAD
 using Reactant
 using Lux: cpu_device, reactant_device
+=======
+using Enzyme, Reactant
+# using Zygote
+# using Mooncake
+>>>>>>> upstream/lux-new
 
 using DataFrames
 using CategoricalArrays
@@ -56,7 +62,13 @@ function init(
     batchsize = config.batchsize
     nfeats = length(feature_names)
     L = get_loss_type(config.loss)
+<<<<<<< HEAD
     lux_loss = _get_lux_loss(L)
+=======
+    # loss = get_loss_fn(config.loss)
+    loss = MSELoss()
+    # loss = BinaryCrossEntropyLoss(; logits=Val(true)),
+>>>>>>> upstream/lux-new
 
     target_levels = nothing
     target_isordered = false
@@ -70,6 +82,7 @@ function init(
         outsize = 2
     end
 
+<<<<<<< HEAD
     dtrain_loader = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize)
     all_batches = collect(dtrain_loader)
 
@@ -83,6 +96,17 @@ function init(
     end
 
     data = all_batches |> dev
+=======
+    Reactant.set_default_backend("gpu")
+    dev = reactant_device()
+    backend = AutoReactant()
+    # dev = cpu_device()
+    # dev = gpu_device()
+    # backend = AutoZygote()
+    # backend = AutoMooncake()
+
+    data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device) |> dev
+>>>>>>> upstream/lux-new
 
     info = Dict(
         :nrounds => 0,
@@ -99,11 +123,15 @@ function init(
     opt = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
     ts = Training.TrainState(m.chain, ps, st, opt)
 
+<<<<<<< HEAD
     cache = Dict(
         :data => data,
         :lux_loss => lux_loss,
         :train_state => ts,
     )
+=======
+    cache = (data=data, ts=ts, loss=loss, backend=backend, info=info)
+>>>>>>> upstream/lux-new
     return m, cache
 end
 
@@ -168,8 +196,23 @@ function fit(
         (verbosity > 0) && @info "Init training"
     end
 
+<<<<<<< HEAD
     while m.info[:nrounds] < config.nrounds
         fit_iter!(m, cache)
+=======
+    ts = cache[:ts]
+    while m.info[:nrounds] < config.nrounds
+        for d in cache[:data]
+            gs, loss, stats, ts = Training.single_train_step!(
+                cache.backend,
+                cache.loss,
+                (d[1], d[2]),
+                ts
+            )
+        end
+        m.info[:nrounds] += 1
+
+>>>>>>> upstream/lux-new
         iter = m.info[:nrounds]
 
         if !isnothing(logger)
@@ -186,7 +229,7 @@ function fit(
 
     _sync_params_to_model!(m, cache)
     m.info[:logger] = logger
-    return m
+    return m, ts
 end
 
 function _sync_params_to_model!(m, cache)
