@@ -40,14 +40,12 @@ function NeuroTreeConfig(; kwargs...)
     )
 
     args_ignored = setdiff(keys(kwargs), keys(args))
-    args_ignored_str = join(args_ignored, ", ")
     length(args_ignored) > 0 &&
-        @warn "Following $(length(args_ignored)) provided arguments will be ignored: $(args_ignored_str)."
+        @warn "Following $(length(args_ignored)) provided arguments will be ignored: $(join(args_ignored, ", "))."
 
     args_default = setdiff(keys(args), keys(kwargs))
-    args_default_str = join(args_default, ", ")
     length(args_default) > 0 &&
-        @info "Following $(length(args_default)) arguments were not provided and will be set to default: $(args_default_str)."
+        @info "Following $(length(args_default)) arguments were not provided and will be set to default: $(join(args_default, ", "))."
 
     args_override = intersect(keys(args), keys(kwargs))
     for arg in args_override
@@ -71,40 +69,41 @@ function NeuroTreeConfig(; kwargs...)
 end
 
 function (config::NeuroTreeConfig)(; nfeats, outsize)
+    function build_block(n_in, n_out)
+        create_tree() = NeuroTree(n_in => n_out;
+            tree_type=config.tree_type,
+            depth=config.depth,
+            trees=config.ntrees, 
+            actA=act_dict[config.actA],
+            scaler=config.scaler,
+            init_scale=config.init_scale
+        )
+
+        if config.stack_size == 1
+            return create_tree()
+        else
+            return Parallel(+, [create_tree() for _ in 1:config.stack_size]...)
+        end
+    end
+
     if config.MLE_tree_split && outsize == 2
         outsize ÷= 2
         chain = Chain(
             BatchNorm(nfeats),
             Parallel(
                 vcat,
-                NeuroTree(nfeats => outsize;
-                    tree_type=config.tree_type,
-                    depth=config.depth,
-                    trees=config.ntrees,
-                    actA=act_dict[config.actA],
-                    scaler=config.scaler,
-                    init_scale=config.init_scale),
-                NeuroTree(nfeats => outsize;
-                    tree_type=config.tree_type,
-                    depth=config.depth,
-                    trees=config.ntrees,
-                    actA=act_dict[config.actA],
-                    scaler=config.scaler,
-                    init_scale=config.init_scale),
+                build_block(nfeats, outsize),
+                build_block(nfeats, outsize),
             )
         )
     else
         chain = Chain(
             BatchNorm(nfeats),
-            NeuroTree(nfeats => outsize;
-                tree_type=config.tree_type,
-                depth=config.depth,
-                trees=config.ntrees,
-                actA=act_dict[config.actA],
-                scaler=config.scaler,
-                init_scale=config.init_scale),
+            build_block(nfeats, outsize)
         )
     end
+    
+    return chain
 end
 
 function _identity_act(x)
