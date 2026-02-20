@@ -28,7 +28,14 @@ function _get_device(config)
     return reactant_device()
 end
 
-function init(config::LearnerTypes, df::AbstractDataFrame; feature_names, target_name, weight_name=nothing, offset_name=nothing)
+function init(
+    config::LearnerTypes,
+    df::AbstractDataFrame;
+    feature_names,
+    target_name,
+    weight_name=nothing,
+    offset_name=nothing
+)
     dev = _get_device(config)
     batchsize = config.batchsize
     nfeats = length(feature_names)
@@ -48,20 +55,15 @@ function init(config::LearnerTypes, df::AbstractDataFrame; feature_names, target
         outsize = 2
     end
 
-    loader = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize)
+    data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize) |> dev
 
-    if L <: MLogLoss
-        loader = (begin
-            x, y = b[1], b[2]
-            y_int = eltype(y) <: Integer ? y : CategoricalArrays.levelcode.(y)
-            length(b) == 2 ? (x, vec(y_int)) : (x, vec(y_int), b[3:end]...)
-        end for b in loader)
-    end
-    
-    data = (dev(b) for b in loader)
-
-    info = Dict(:nrounds => 0, :feature_names => feature_names, :target_levels => target_levels, 
-                :target_isordered => target_isordered, :device => config.device)
+    info = Dict(
+        :nrounds => 0,
+        :feature_names => feature_names,
+        :target_levels => target_levels,
+        :target_isordered => target_isordered,
+        :device => config.device
+    )
 
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
@@ -92,7 +94,17 @@ Training function of NeuroTabModels' internal API.
 - `print_every_n=9999`: Integer. Logs training progress every N epochs.
 - `verbosity=1`: Integer. Controls the logging level (0 for silent, >0 for info).
 """
-function fit(config::LearnerTypes, dtrain; feature_names, target_name, weight_name=nothing, offset_name=nothing, deval=nothing, print_every_n=9999, verbosity=1)
+function fit(
+    config::LearnerTypes,
+    dtrain;
+    feature_names,
+    target_name,
+    weight_name=nothing,
+    offset_name=nothing,
+    deval=nothing,
+    print_every_n=9999,
+    verbosity=1
+)
     feature_names, target_name = Symbol.(feature_names), Symbol(target_name)
     weight_name = isnothing(weight_name) ? nothing : Symbol(weight_name)
     offset_name = isnothing(offset_name) ? nothing : Symbol(offset_name)
@@ -103,8 +115,7 @@ function fit(config::LearnerTypes, dtrain; feature_names, target_name, weight_na
     if !isnothing(deval)
         cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)
         logger = init_logger(config)
-        _sync_params_to_model!(m, cache)
-        cb(logger, 0, m)
+        cb(logger, 0, cache[:train_state])
         (verbosity > 0) && @info "Init training" metric = logger[:metrics][end]
     else
         (verbosity > 0) && @info "Init training"
@@ -115,8 +126,7 @@ function fit(config::LearnerTypes, dtrain; feature_names, target_name, weight_na
         iter = m.info[:nrounds]
 
         if !isnothing(logger)
-            _sync_params_to_model!(m, cache)
-            cb(logger, iter, m)
+            cb(logger, iter, cache[:train_state])
             if verbosity > 0 && iter % print_every_n == 0
                 @info "iter $iter" metric = logger[:metrics][:metric][end]
             end
