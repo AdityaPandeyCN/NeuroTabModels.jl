@@ -8,9 +8,6 @@ using CategoricalArrays
 using OrderedCollections
 using NeuroTabModels
 
-using Reactant
-Reactant.set_default_backend("cpu")
-
 Random.seed!(123)
 
 df = MLDatasets.Titanic().dataframe
@@ -58,14 +55,14 @@ learner = NeuroTabRegressor(
 @time m = NeuroTabModels.fit(
     learner,
     dtrain;
-    # deval, # removed - inference not yet adapted
+    deval, # FIXME: important slowdown when deval is used
     target_name,
     feature_names,
     print_every_n=10,
 );
 
 # commented out - inference not yet adapted
-# p_train = m(dtrain)
-# p_eval = m(deval)
-# @info mean((p_train .> 0.5) .== (dtrain[!, target_name] .> 0.5))
-# @info mean((p_eval .> 0.5) .== (deval[!, target_name] .> 0.5))
+p_train = m(dtrain)
+p_eval = m(deval)
+@info mean((p_train .> 0.5) .== (dtrain[!, target_name] .> 0.5))
+@info mean((p_eval .> 0.5) .== (deval[!, target_name] .> 0.5))
