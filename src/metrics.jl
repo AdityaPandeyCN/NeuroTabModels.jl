@@ -8,145 +8,149 @@ using Lux
 using Reactant
 
 """
-    mse(m, x, y; agg=mean)
-    mse(m, x, y, w; agg=mean)
-    mse(m, x, y, w, offset; agg=mean)
+    mse(x, y; agg=mean)
+    mse(x, y, w; agg=mean)
+    mse(x, y, w, offset; agg=mean)
 """
 function mse(m, x, y; agg=mean)
-    return agg((vec(m(x)) .- vec(y)) .^ 2)
+    metric = agg((vec(m(x)) .- vec(y)) .^ 2)
+    return metric
 end
 function mse(m, x, y, w; agg=mean)
-    return agg((vec(m(x)) .- vec(y)) .^ 2 .* vec(w))
+    metric = agg((vec(m(x)) .- vec(y)) .^ 2 .* vec(w))
+    return metric
 end
 function mse(m, x, y, w, offset; agg=mean)
-    return agg((vec(m(x)) .+ vec(offset) .- vec(y)) .^ 2 .* vec(w))
+    metric = agg((vec(m(x)) .+ vec(offset) .- vec(y)) .^ 2 .* vec(w))
+    return metric
 end
 
 """
-    mae(m, x, y; agg=mean)
-    mae(m, x, y, w; agg=mean)
-    mae(m, x, y, w, offset; agg=mean)
+    mae(x, y; agg=mean)
+    mae(x, y, w; agg=mean)
+    mae(x, y, w, offset; agg=mean)
 """
 function mae(m, x, y; agg=mean)
-    return agg(abs.(vec(m(x)) .- vec(y)))
+    metric = agg(abs.(vec(m(x)) .- vec(y)))
+    return metric
 end
 function mae(m, x, y, w; agg=mean)
-    return agg(abs.(vec(m(x)) .- vec(y)) .* vec(w))
+    metric = agg(abs.(vec(m(x)) .- vec(y)) .* vec(w))
+    return metric
 end
 function mae(m, x, y, w, offset; agg=mean)
-    return agg(abs.(vec(m(x)) .+ vec(offset) .- vec(y)) .* vec(w))
+    metric = agg(abs.(vec(m(x)) .+ vec(offset) .- vec(y)) .* vec(w))
+    return metric
 end
 
+
 """
-    logloss(m, x, y; agg=mean)
-    logloss(m, x, y, w; agg=mean)
-    logloss(m, x, y, w, offset; agg=mean)
+    logloss(x, y; agg=mean)
+    logloss(x, y, w; agg=mean)
+    logloss(x, y, w, offset; agg=mean)
 """
 function logloss(m, x, y; agg=mean)
     p = vec(m(x))
-    y = vec(y)
-    return agg((1 .- y) .* p .- logsigmoid.(p))
+    metric = agg((1 .- vec(y)) .* p .- logsigmoid.(p))
+    return metric
 end
 function logloss(m, x, y, w; agg=mean)
     p = vec(m(x))
-    y = vec(y)
-    return agg(((1 .- y) .* p .- logsigmoid.(p)) .* vec(w))
+    metric = agg(((1 .- vec(y)) .* p .- logsigmoid.(p)) .* vec(w))
+    return metric
 end
 function logloss(m, x, y, w, offset; agg=mean)
     p = vec(m(x)) .+ vec(offset)
-    y = vec(y)
-    return agg(((1 .- y) .* p .- logsigmoid.(p)) .* vec(w))
+    metric = agg(((1 .- vec(y)) .* p .- logsigmoid.(p)) .* vec(w))
+    return metric
 end
 
+
 """
-    tweedie(m, x, y; agg=mean)
-    tweedie(m, x, y, w; agg=mean)
-    tweedie(m, x, y, w, offset; agg=mean)
+    tweedie(x, y; agg=mean)
+    tweedie(x, y, w; agg=mean)
+    tweedie(x, y, w, offset; agg=mean)
 """
 function tweedie(m, x, y; agg=mean)
     rho = eltype(x)(1.5)
     p = exp.(vec(m(x)))
-    y = vec(y)
-    return agg(2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* p .^ (1 - rho) / (1 - rho) +
-                     p .^ (2 - rho) / (2 - rho)))
+    agg(2 .* (vec(y) .^ (2 - rho) / (1 - rho) / (2 - rho) - vec(y) .* p .^ (1 - rho) / (1 - rho) +
+              p .^ (2 - rho) / (2 - rho))
+    )
 end
-function tweedie(m, x, y, w; agg=mean)
+function tweedie(m, x, y, w)
+    agg = mean
     rho = eltype(x)(1.5)
     p = exp.(vec(m(x)))
-    y = vec(y)
-    w = vec(w)
-    return agg(w .* 2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* p .^ (1 - rho) / (1 - rho) +
-                          p .^ (2 - rho) / (2 - rho)))
+    agg(vec(w) .* 2 .* (vec(y) .^ (2 - rho) / (1 - rho) / (2 - rho) - vec(y) .* p .^ (1 - rho) / (1 - rho) +
+                   p .^ (2 - rho) / (2 - rho))
+    )
 end
 function tweedie(m, x, y, w, offset; agg=mean)
     rho = eltype(x)(1.5)
     p = exp.(vec(m(x)) .+ vec(offset))
-    y = vec(y)
-    w = vec(w)
-    return agg(w .* 2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* p .^ (1 - rho) / (1 - rho) +
-                          p .^ (2 - rho) / (2 - rho)))
+    agg(vec(w) .* 2 .* (vec(y) .^ (2 - rho) / (1 - rho) / (2 - rho) - vec(y) .* p .^ (1 - rho) / (1 - rho) +
+                   p .^ (2 - rho) / (2 - rho))
+    )
 end
 
 """
-    mlogloss(m, x, y; agg=mean)
-    mlogloss(m, x, y, w; agg=mean)
-    mlogloss(m, x, y, w, offset; agg=mean)
+    mlogloss(x, y; agg=mean)
+    mlogloss(x, y, w; agg=mean)
+    mlogloss(x, y, w, offset; agg=mean)
 """
 function mlogloss(m, x, y; agg=mean)
-    p = m(x)                                                 # (k, batch)
+    p = logsoftmax(m(x); dims=1)
     k = size(p, 1)
-    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)        # (k, batch)
-    lsm = logsoftmax(p; dims=1)
-    return agg(vec(-sum(y_oh .* lsm; dims=1)))
+    raw = vec(-sum(((UInt32(1):UInt32(k)) .== reshape(y, 1, :)) .* p; dims=1))
+    metric = agg(raw)
+    return metric
 end
 function mlogloss(m, x, y, w; agg=mean)
-    p = m(x)
+    p = logsoftmax(m(x); dims=1)
     k = size(p, 1)
-    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)
-    lsm = logsoftmax(p; dims=1)
-    return agg(vec(-sum(y_oh .* lsm; dims=1)) .* vec(w))
+    raw = vec(-sum(((UInt32(1):UInt32(k)) .== reshape(y, 1, :)) .* p; dims=1))
+    metric = agg(raw .* vec(w))
+    return metric
 end
 function mlogloss(m, x, y, w, offset; agg=mean)
-    p = m(x) .+ offset
+    p = logsoftmax(m(x) .+ offset; dims=1)
     k = size(p, 1)
-    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)
-    lsm = logsoftmax(p; dims=1)
-    return agg(vec(-sum(y_oh .* lsm; dims=1)) .* vec(w))
+    raw = vec(-sum(((UInt32(1):UInt32(k)) .== reshape(y, 1, :)) .* p; dims=1))
+    metric = agg(raw .* vec(w))
+    return metric
 end
+
 
 gaussian_loss_elt(μ, σ, y) = -σ - (y - μ)^2 / (2 * max(2.0f-7, exp(2 * σ)))
 
-"""
-    gaussian_mle(m, x, y; agg=mean)
-    gaussian_mle(m, x, y, w; agg=mean)
-    gaussian_mle(m, x, y, w, offset; agg=mean)
+
+""""
+    gaussian_mle(x, y; agg=mean)
+    gaussian_mle(x, y, w; agg=mean)
+    gaussian_mle(x, y, w, offset; agg=mean)
 """
 function gaussian_mle(m, x, y; agg=mean)
     p = m(x)
-    μ = view(p, 1, :)
-    σ = view(p, 2, :)
-    return agg(gaussian_loss_elt.(μ, σ, vec(y)))
+    metric = agg(gaussian_loss_elt.(view(p, 1, :), view(p, 2, :), vec(y)))
+    return metric
 end
 function gaussian_mle(m, x, y, w; agg=mean)
     p = m(x)
-    μ = view(p, 1, :)
-    σ = view(p, 2, :)
-    return agg(gaussian_loss_elt.(μ, σ, vec(y)) .* vec(w))
+    metric = agg(gaussian_loss_elt.(view(p, 1, :), view(p, 2, :), vec(y)) .* vec(w))
+    return metric
 end
 function gaussian_mle(m, x, y, w, offset; agg=mean)
     p = m(x) .+ offset
-    μ = view(p, 1, :)
-    σ = view(p, 2, :)
-    return agg(gaussian_loss_elt.(μ, σ, vec(y)) .* vec(w))
+    metric = agg(gaussian_loss_elt.(view(p, 1, :), view(p, 2, :), vec(y)) .* vec(w))
+    return metric
 end
 
 function get_metric(ts::Training.TrainState, f::Function, data)
-    ps = ts.parameters
-    st_test = Lux.testmode(ts.states)
-    chain = ts.model
-    x0 = first(data)[1]
-    model_compiled = @compile chain(x0, ps, st_test)
-    m = x -> first(model_compiled(x, ps, st_test))
+    ps, st = ts.parameters, Lux.testmode(ts.states)
+    model_compiled = @compile ts.model(first(data)[1], ps, st)
+    m = x -> first(model_compiled(x, ps, st))
+    
     metric = 0.0f0
     ws = 0.0f0
     for d in data
@@ -157,7 +161,8 @@ function get_metric(ts::Training.TrainState, f::Function, data)
             ws += size(d[2], ndims(d[2]))
         end
     end
-    return metric / ws
+    metric = metric / ws
+    return metric
 end
 
 const metric_dict = Dict(
