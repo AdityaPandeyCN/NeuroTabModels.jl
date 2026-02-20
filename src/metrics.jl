@@ -4,7 +4,8 @@ export metric_dict, is_maximise, get_metric
 
 import Statistics: mean, std
 import NNlib: logsigmoid, logsoftmax, softmax, relu, hardsigmoid
-import OneHotArrays: onehotbatch
+using Lux
+using Reactant
 
 """
     mse(m, x, y; agg=mean)
@@ -92,31 +93,25 @@ end
     mlogloss(m, x, y, w, offset; agg=mean)
 """
 function mlogloss(m, x, y; agg=mean)
-    p = m(x)
-    p_t = permutedims(p, (2, 1))
-    lsm = logsoftmax(p_t; dims=1)
-    k = size(lsm, 1)
-    y_oh = onehotbatch(vec(y), UInt32(1):UInt32(k))
-    raw = -sum(y_oh .* lsm; dims=1)
-    return agg(vec(raw))
+    p = m(x)                                                 # (k, batch)
+    k = size(p, 1)
+    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)        # (k, batch)
+    lsm = logsoftmax(p; dims=1)
+    return agg(vec(-sum(y_oh .* lsm; dims=1)))
 end
 function mlogloss(m, x, y, w; agg=mean)
     p = m(x)
-    p_t = permutedims(p, (2, 1))
-    lsm = logsoftmax(p_t; dims=1)
-    k = size(lsm, 1)
-    y_oh = onehotbatch(vec(y), UInt32(1):UInt32(k))
-    raw = -sum(y_oh .* lsm; dims=1)
-    return agg(vec(raw) .* vec(w))
+    k = size(p, 1)
+    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)
+    lsm = logsoftmax(p; dims=1)
+    return agg(vec(-sum(y_oh .* lsm; dims=1)) .* vec(w))
 end
 function mlogloss(m, x, y, w, offset; agg=mean)
     p = m(x) .+ offset
-    p_t = permutedims(p, (2, 1))
-    lsm = logsoftmax(p_t; dims=1)
-    k = size(lsm, 1)
-    y_oh = onehotbatch(vec(y), UInt32(1):UInt32(k))
-    raw = -sum(y_oh .* lsm; dims=1)
-    return agg(vec(raw) .* vec(w))
+    k = size(p, 1)
+    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)
+    lsm = logsoftmax(p; dims=1)
+    return agg(vec(-sum(y_oh .* lsm; dims=1)) .* vec(w))
 end
 
 gaussian_loss_elt(μ, σ, y) = -σ - (y - μ)^2 / (2 * max(2.0f-7, exp(2 * σ)))
@@ -128,24 +123,30 @@ gaussian_loss_elt(μ, σ, y) = -σ - (y - μ)^2 / (2 * max(2.0f-7, exp(2 * σ)))
 """
 function gaussian_mle(m, x, y; agg=mean)
     p = m(x)
-    μ = view(p, :, 1)
-    σ = view(p, :, 2)
+    μ = view(p, 1, :)
+    σ = view(p, 2, :)
     return agg(gaussian_loss_elt.(μ, σ, vec(y)))
 end
 function gaussian_mle(m, x, y, w; agg=mean)
     p = m(x)
-    μ = view(p, :, 1)
-    σ = view(p, :, 2)
+    μ = view(p, 1, :)
+    σ = view(p, 2, :)
     return agg(gaussian_loss_elt.(μ, σ, vec(y)) .* vec(w))
 end
 function gaussian_mle(m, x, y, w, offset; agg=mean)
     p = m(x) .+ offset
-    μ = view(p, :, 1)
-    σ = view(p, :, 2)
+    μ = view(p, 1, :)
+    σ = view(p, 2, :)
     return agg(gaussian_loss_elt.(μ, σ, vec(y)) .* vec(w))
 end
 
-function get_metric(m, f::Function, data)
+function get_metric(ts::Training.TrainState, f::Function, data)
+    ps = ts.parameters
+    st_test = Lux.testmode(ts.states)
+    chain = ts.model
+    x0 = first(data)[1]
+    model_compiled = @compile chain(x0, ps, st_test)
+    m = x -> first(model_compiled(x, ps, st_test))
     metric = 0.0f0
     ws = 0.0f0
     for d in data
@@ -156,8 +157,7 @@ function get_metric(m, f::Function, data)
             ws += size(d[2], ndims(d[2]))
         end
     end
-    metric = metric / ws
-    return metric
+    return metric / ws
 end
 
 const metric_dict = Dict(
