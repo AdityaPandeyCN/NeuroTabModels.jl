@@ -7,9 +7,7 @@ using ..Learners: LearnerTypes
 using ..Data: get_df_loader_train
 using ..Metrics
 
-using Lux
 using Lux: Training, reactant_device
-using Reactant
 
 export CallBack, init_logger, update_logger!, agg_logger
 
@@ -33,8 +31,6 @@ function CallBack(
     offset_name=nothing
 )
 
-    backend = config.device == :gpu ? "gpu" : "cpu"
-    Reactant.set_default_backend(backend)
     dev = reactant_device()
     batchsize = config.batchsize
     feval = metric_dict[config.metric]
