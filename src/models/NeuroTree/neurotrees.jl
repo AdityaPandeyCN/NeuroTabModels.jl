@@ -70,7 +70,7 @@ end
 
 function (config::NeuroTreeConfig)(; nfeats, outsize)
     function build_block(n_in, n_out)
-        create_tree() = NeuroTree(n_in => n_out;
+        create_tree(in_dim, out_dim) = NeuroTree(in_dim => out_dim;
             tree_type=config.tree_type,
             depth=config.depth,
             trees=config.ntrees, 
@@ -80,10 +80,18 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
         )
 
         if config.stack_size == 1
-            return create_tree()
-        else
-            return Parallel(+, [create_tree() for _ in 1:config.stack_size]...)
+            return create_tree(n_in, n_out)
         end
+        
+        layers = [create_tree(n_in, config.hidden_size)]
+        
+        for _ in 1:(config.stack_size - 2)
+            push!(layers, SkipConnection(create_tree(config.hidden_size, config.hidden_size), +))
+        end
+        
+        push!(layers, create_tree(config.hidden_size, n_out))
+        
+        return Chain(layers...)
     end
 
     if config.MLE_tree_split && outsize == 2
@@ -109,10 +117,12 @@ end
 function _identity_act(x)
     return x ./ sum(abs.(x), dims=2)
 end
+
 function _tanh_act(x)
     x = tanh_fast.(x)
     return x ./ sum(abs.(x), dims=2)
 end
+
 function _hardtanh_act(x)
     x = hardtanh.(x)
     return x ./ sum(abs.(x), dims=2)
