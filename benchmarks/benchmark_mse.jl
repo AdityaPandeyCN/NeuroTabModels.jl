@@ -48,7 +48,7 @@ learner = NeuroTabRegressor(
 @time m = NeuroTabModels.fit(
     learner,
     dtrain;
-    # deval=dtrain,
+    # deval=dtrain, # FIXME: very slow when deval is used, need to adapt infer
     target_name,
     feature_names,
     print_every_n=2,
