@@ -77,22 +77,42 @@ function init(
 end
 
 """
-    fit(config::LearnerTypes, dtrain; kwargs...)
+    function fit(
+        config::LearnerTypes,
+        dtrain;
+        feature_names,
+        target_name,
+        weight_name=nothing,
+        offset_name=nothing,
+        deval=nothing,
+        metric=nothing,
+        print_every_n=9999,
+        early_stopping_rounds=9999,
+        verbosity=1,
+        device=:cpu,
+        gpuID=0,
+    )
 
 Training function of NeuroTabModels' internal API.
 
 # Arguments
-- `config::LearnerTypes`: The configuration object defining the model architecture and training hyperparameters (e.g., `NeuroTabClassifier`, `NeuroTabRegressor`).
-- `dtrain`: The training data, must be `<:AbstractDataFrame`.
 
-# Keyword Arguments
+- `config::LearnerTypes`: The configuration object defining the model architecture, loss, and training hyperparameters.
+- `dtrain`: The training data. Must be `<:AbstractDataFrame`.
+
+# Keyword arguments
+
 - `feature_names`: Required. A `Vector{Symbol}` or `Vector{String}` of the feature names to use.
 - `target_name`: Required. A `Symbol` or `String` indicating the name of the target variable.
-- `weight_name=nothing`: Optional `Symbol` or `String` for the sample weights column.
-- `offset_name=nothing`: Optional `Symbol` or `String` for the offset column.
-- `deval=nothing`: Optional `AbstractDataFrame` for tracking evaluation metrics and performing early stopping.
-- `print_every_n=9999`: Integer. Logs training progress every N epochs.
-- `verbosity=1`: Integer. Controls the logging level (0 for silent, >0 for info).
+- `weight_name=nothing`: Optional. A `Symbol` or `String` indicating the sample weights column.
+- `offset_name=nothing`: Optional. A `Symbol` or `String` indicating the offset column.
+- `deval=nothing`: Optional. Evaluation data (`<:AbstractDataFrame`) for tracking metrics and early stopping.
+- `metric=nothing`: Optional. The evaluation metric to track (e.g., `:mse`, `:logloss`). 
+- `print_every_n=9999`: Integer. Logs training progress to the console every `N` epochs.
+- `early_stopping_rounds=9999`: Integer. Stops training if the evaluation metric does not improve for this many rounds.
+- `verbosity=1`: Integer. Controls the logging level (`0` for silent, `>0` for info).
+- `device=:cpu`: Symbol. Hardware device to use for training (`:cpu` or `:gpu`).
+- `gpuID=0`: Integer. Specifies which GPU to use if multiple are available.
 """
 function fit(
     config::LearnerTypes,
