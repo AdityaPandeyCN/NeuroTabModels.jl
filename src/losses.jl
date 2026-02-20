@@ -4,8 +4,7 @@ export get_loss_fn, get_loss_type
 export LossType, MSE, MAE, LogLoss, MLogLoss, GaussianMLE, Tweedie
 
 import Statistics: mean
-import NNlib: logsigmoid, logsoftmax
-import OneHotArrays: onehotbatch
+import NNlib: logsigmoid
 using Lux
 
 # -----------------------------------------------------------------------
@@ -56,21 +55,20 @@ end
 struct MLog_Loss <: Lux.AbstractLossFunction end
 function (::MLog_Loss)(p::AbstractArray, y)
     k = size(p, 1)
-    y_oh = ndims(y) == 1 ? onehotbatch(vec(y), 1:k) : y
-    lp = logsoftmax(p; dims=1)
-    mean(-sum(y_oh .* lp; dims=1))
+    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)   # (k, batch)
+    return Lux.CrossEntropyLoss(; logits=Val(true))(p, y_oh)
 end
 function (::MLog_Loss)(p::AbstractArray, y, w)
     k = size(p, 1)
-    y_oh = ndims(y) == 1 ? onehotbatch(vec(y), 1:k) : y
-    lp = logsoftmax(p; dims=1)
-    sum(-sum(y_oh .* lp; dims=1) .* w) / sum(w)
+    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)
+    per_sample = Lux.CrossEntropyLoss(; logits=Val(true), agg=identity)(p, y_oh)
+    return sum(vec(per_sample) .* vec(w)) / sum(w)
 end
 function (::MLog_Loss)(p::AbstractArray, y, w, offset)
     k = size(p, 1)
-    y_oh = ndims(y) == 1 ? onehotbatch(vec(y), 1:k) : y
-    lp = logsoftmax(p .+ offset; dims=1)
-    sum(-sum(y_oh .* lp; dims=1) .* w) / sum(w)
+    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)
+    per_sample = Lux.CrossEntropyLoss(; logits=Val(true), agg=identity)(p .+ offset, y_oh)
+    return sum(vec(per_sample) .* vec(w)) / sum(w)
 end
 
 # -----------------------------------------------------------------------
