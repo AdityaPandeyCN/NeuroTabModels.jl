@@ -11,7 +11,7 @@ using CategoricalArrays
 """
     ContainerTrain
 """
-struct ContainerTrain{A<:AbstractMatrix,B<:AbstractVector,C,D}
+struct ContainerTrain{A<:AbstractMatrix,B,C,D}
     x::A
     y::B
     w::C
@@ -22,25 +22,25 @@ length(data::ContainerTrain) = size(data.x, 2)
 
 function getindex(data::ContainerTrain{A,B,C,D}, idx::AbstractVector) where {A,B,C<:Nothing,D<:Nothing}
     x = data.x[:, idx]
-    y = data.y[idx]
+    y = data.y[1:1, idx]
     return (x, y)
 end
 function getindex(data::ContainerTrain{A,B,C,D}, idx::AbstractVector) where {A,B,C<:AbstractVector,D<:Nothing}
     x = data.x[:, idx]
-    y = data.y[idx]
+    y = data.y[1:1, idx]
     w = data.w[idx]
     return (x, y, w)
 end
 function getindex(data::ContainerTrain{A,B,C,D}, idx::AbstractVector) where {A,B,C<:AbstractVector,D<:AbstractVector}
     x = data.x[:, idx]
-    y = data.y[idx]
+    y = data.y[1:1, idx]
     w = data.w[idx]
     offset = data.offset[idx]
     return (x, y, w, offset)
 end
 function getindex(data::ContainerTrain{A,B,C,D}, idx::AbstractVector) where {A,B,C<:AbstractVector,D<:AbstractMatrix}
     x = data.x[:, idx]
-    y = data.y[idx]
+    y = data.y[1:1, idx]
     w = data.w[idx]
     offset = data.offset[:, idx]
     return (x, y, w, offset)
@@ -53,8 +53,8 @@ function get_df_loader_train(
     weight_name=nothing,
     offset_name=nothing,
     batchsize,
-    shuffle=true,
-)
+    shuffle=true)
+
     feature_names = Symbol.(feature_names)
     x = Matrix{Float32}(Matrix{Float32}(select(df, feature_names))')
 
@@ -63,6 +63,7 @@ function get_df_loader_train(
     else
         y = Float32.(df[!, target_name])
     end
+    y = reshape(y, 1, :)
 
     w = isnothing(weight_name) ? nothing : Float32.(df[!, weight_name])
 
@@ -74,7 +75,7 @@ function get_df_loader_train(
 
     container = ContainerTrain(x, y, w, offset)
     batchsize = min(batchsize, length(container))
-    dtrain = DataLoader(container; shuffle, batchsize, partial=true, parallel=false)
+    dtrain = DataLoader(container; shuffle, batchsize, partial=false, parallel=false)
     return dtrain
 end
 
@@ -107,8 +108,8 @@ function get_df_loader_infer(
     df::AbstractDataFrame;
     feature_names,
     offset_name=nothing,
-    batchsize=2048,
-)
+    batchsize)
+
     feature_names = Symbol.(feature_names)
     x = Matrix{Float32}(Matrix{Float32}(select(df, feature_names))')
 

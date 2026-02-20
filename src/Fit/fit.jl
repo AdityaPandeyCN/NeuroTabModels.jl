@@ -1,6 +1,6 @@
 module Fit
 
-export fit, _sync_to_cpu!
+export fit, fit_iter!
 
 using ..Data
 using ..Learners
@@ -8,15 +8,13 @@ using ..Models
 using ..Losses
 using ..Metrics
 
+import Random: Xoshiro
 import MLJModelInterface: fit
-import Reactant
-import Reactant: ConcreteRArray, ConcreteRNumber
-import Optimisers
-import Optimisers: OptimiserChain, WeightDecay, Momentum, Nesterov, Descent, Adam, NAdam
-import Flux
-import Flux: onehotbatch
-import ADTypes: AutoEnzyme
-import Functors: fmap
+import Optimisers: OptimiserChain, WeightDecay, NAdam
+
+using Lux
+using Reactant
+using Lux: cpu_device, reactant_device
 
 using DataFrames
 using CategoricalArrays
@@ -24,42 +22,10 @@ using CategoricalArrays
 include("callback.jl")
 using .CallBacks
 
-function _to_rarray_with_scalars(x)
-    return fmap(x; exclude=v -> v isa AbstractArray{<:Number} || v isa Number) do v
-        if v isa AbstractArray{<:Number}
-            ConcreteRArray(v)
-        elseif v isa Bool
-            v
-        elseif v isa Number
-            ConcreteRNumber(Float32(v))
-        else
-            v
-        end
-    end
-end
-
-function _train_step!(loss_fn, m, opts, args...)
-    _, grads = Flux.withgradient(loss_fn, AutoEnzyme(), m, args...)
-    new_opts, new_model = Optimisers.update!(opts, m, grads[1])
-    return new_opts, new_model
-end
-
-function _to_batches_ra(all_batches, L, outsize)
-    if L <: MLogLoss
-        return map(all_batches) do batch
-            x_ra = ConcreteRArray(batch[1])
-            y_onehot = Float32.(onehotbatch(batch[2], UInt32(1):UInt32(outsize)))
-            y_ra = ConcreteRArray(y_onehot)
-            length(batch) > 2 ? (x_ra, y_ra, map(b -> ConcreteRArray(b), batch[3:end])...) : (x_ra, y_ra)
-        end
-    else
-        return [map(b -> ConcreteRArray(b), batch) for batch in all_batches]
-    end
-end
-
-function _sync_to_cpu!(m, cache)
-    chain_cpu = Flux.fmap(x -> x isa ConcreteRArray ? Array(x) : x, cache[:m_ra].chain)
-    Flux.loadmodel!(m.chain, chain_cpu)
+function _get_device(config)
+    backend = config.device == :gpu ? "gpu" : "cpu"
+    Reactant.set_default_backend(backend)
+    return reactant_device()
 end
 
 function init(
@@ -68,19 +34,20 @@ function init(
     feature_names,
     target_name,
     weight_name=nothing,
-    offset_name=nothing,
+    offset_name=nothing
 )
-
+    dev = _get_device(config)
     batchsize = config.batchsize
     nfeats = length(feature_names)
-    loss = get_loss_fn(config.loss)
     L = get_loss_type(config.loss)
+    lux_loss = get_loss_fn(L)
 
     target_levels = nothing
     target_isordered = false
     outsize = 1
+
     if L <: MLogLoss
-        eltype(df[!, target_name]) <: CategoricalValue || error("Target variable `$target_name` must have its elements `<: CategoricalValue`")
+        eltype(df[!, target_name]) <: CategoricalValue || error("Target `$target_name` must be `<: CategoricalValue`")
         target_levels = CategoricalArrays.levels(df[!, target_name])
         target_isordered = isordered(df[!, target_name])
         outsize = length(target_levels)
@@ -88,46 +55,30 @@ function init(
         outsize = 2
     end
 
-    dtrain = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize)
+    data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize) |> dev
 
     info = Dict(
         :nrounds => 0,
         :feature_names => feature_names,
         :target_levels => target_levels,
-        :target_isordered => target_isordered)
+        :target_isordered => target_isordered,
+        :device => config.device
+    )
 
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
 
-    optim = OptimiserChain(Adam(config.lr), WeightDecay(config.wd))
-    opts = Optimisers.setup(optim, m)
+    rng = Xoshiro(config.seed)
+    ps, st = Lux.setup(rng, m.chain) |> dev
+    opt = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
+    ts = Training.TrainState(m.chain, ps, st, opt)
 
-    chain_ra = Reactant.to_rarray(m.chain)
-    m_ra = NeuroTabModel(m._loss_type, chain_ra, Dict{Symbol,Any}())
-    opts_ra = _to_rarray_with_scalars(opts)
-
-    all_batches = collect(dtrain)
-    batches_ra = _to_batches_ra(all_batches, L, outsize)
-    full_batchsize = size(all_batches[1][1], ndims(all_batches[1][1]))
-    is_full_batch = [size(b[1], ndims(b[1])) == full_batchsize for b in all_batches]
-
-    compiled_step = Reactant.@compile _train_step!(loss, m_ra, opts_ra, batches_ra[1]...)
-
-    cache = Dict(
-        :loss => loss,
-        :info => info,
-        :compiled_step => compiled_step,
-        :m_ra => m_ra,
-        :opts_ra => opts_ra,
-        :batches_ra => batches_ra,
-        :is_full_batch => is_full_batch
-    )
-    return m, cache
+    return m, Dict(:data => data, :lux_loss => lux_loss, :train_state => ts)
 end
 
 """
     function fit(
-        config::NeuroTypes,
+        config::LearnerTypes,
         dtrain;
         feature_names,
         target_name,
@@ -141,16 +92,23 @@ end
     )
 Training function of NeuroTabModels' internal API.
 # Arguments
-- `config::LearnerTypes`
-- `dtrain`: Must be `<:AbstractDataFrame`  
+
+- `config::LearnerTypes`: The configuration object defining the model architecture, loss, and training hyperparameters.
+- `dtrain`: The training data. Must be `<:AbstractDataFrame`.
+
 # Keyword arguments
-- `feature_names`:          Required kwarg, a `Vector{Symbol}` or `Vector{String}` of the feature names.
-- `target_name`             Required kwarg, a `Symbol` or `String` indicating the name of the target variable.  
-- `weight_name=nothing`
-- `offset_name=nothing`
-- `deval=nothing`           Data for tracking evaluation metric and perform early stopping.
-- `print_every_n=9999`
-- `verbosity=1`
+
+- `feature_names`: Required. A `Vector{Symbol}` or `Vector{String}` of the feature names to use.
+- `target_name`: Required. A `Symbol` or `String` indicating the name of the target variable.
+- `weight_name=nothing`: Optional. A `Symbol` or `String` indicating the sample weights column.
+- `offset_name=nothing`: Optional. A `Symbol` or `String` indicating the offset column.
+- `deval=nothing`: Optional. Evaluation data (`<:AbstractDataFrame`) for tracking metrics and early stopping.
+- `metric=nothing`: Optional. The evaluation metric to track (e.g., `:mse`, `:logloss`). 
+- `print_every_n=9999`: Integer. Logs training progress to the console every `N` epochs.
+- `early_stopping_rounds=9999`: Integer. Stops training if the evaluation metric does not improve for this many rounds.
+- `verbosity=1`: Integer. Controls the logging level (`0` for silent, `>0` for info).
+- `device=:cpu`: Symbol. Hardware device to use for training (`:cpu` or `:gpu`).
+- `gpuID=0`: Integer. Specifies which GPU to use if multiple are available.
 """
 
 function fit(
@@ -164,9 +122,7 @@ function fit(
     print_every_n=9999,
     verbosity=1
 )
-
-    feature_names = Symbol.(feature_names)
-    target_name = Symbol(target_name)
+    feature_names, target_name = Symbol.(feature_names), Symbol(target_name)
     weight_name = isnothing(weight_name) ? nothing : Symbol(weight_name)
     offset_name = isnothing(offset_name) ? nothing : Symbol(offset_name)
 
@@ -176,7 +132,7 @@ function fit(
     if !isnothing(deval)
         cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)
         logger = init_logger(config)
-        cb(logger, 0, m)
+        cb(logger, 0, cache[:train_state])
         (verbosity > 0) && @info "Init training" metric = logger[:metrics][end]
     else
         (verbosity > 0) && @info "Init training"
@@ -185,35 +141,36 @@ function fit(
     while m.info[:nrounds] < config.nrounds
         fit_iter!(m, cache)
         iter = m.info[:nrounds]
+
         if !isnothing(logger)
-            _sync_to_cpu!(m, cache)
-            cb(logger, iter, m)
+            cb(logger, iter, cache[:train_state])
             if verbosity > 0 && iter % print_every_n == 0
                 @info "iter $iter" metric = logger[:metrics][:metric][end]
             end
             (logger[:iter_since_best] >= logger[:early_stopping_rounds]) && break
+        else
+            (verbosity > 0 && iter % print_every_n == 0) && @info "iter $iter"
         end
     end
 
-    _sync_to_cpu!(m, cache)
+    _sync_params_to_model!(m, cache)
     m.info[:logger] = logger
     return m
 end
 
+function _sync_params_to_model!(m, cache)
+    ts = cache[:train_state]
+    cdev = cpu_device()
+    m.info[:ps] = cdev(ts.parameters)
+    m.info[:st] = cdev(Lux.testmode(ts.states))
+end
+
 function fit_iter!(m, cache)
-    m_ra = cache[:m_ra]
-    opts_ra = cache[:opts_ra]
-
-    for (args_ra, is_full) in zip(cache[:batches_ra], cache[:is_full_batch])
-        if is_full
-            opts_ra, m_ra = cache[:compiled_step](cache[:loss], m_ra, opts_ra, args_ra...)
-        else
-            opts_ra, m_ra = Reactant.@jit _train_step!(cache[:loss], m_ra, opts_ra, args_ra...)
-        end
+    ts, lux_loss = cache[:train_state], cache[:lux_loss]
+    for d in cache[:data]
+        _, loss, _, ts = Training.single_train_step!(AutoEnzyme(), lux_loss, d, ts)
     end
-
-    cache[:opts_ra] = opts_ra
-    cache[:m_ra] = m_ra
+    cache[:train_state] = ts
     m.info[:nrounds] += 1
     return nothing
 end

@@ -1,3 +1,7 @@
+@testset "Core - data iterators" begin
+    
+end
+
 @testset "Core - internals test" begin
 
     learner = NeuroTabRegressor(;

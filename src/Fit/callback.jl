@@ -2,11 +2,12 @@ module CallBacks
 
 using DataFrames
 using Statistics: mean, median
-using Flux: cpu
 
 using ..Learners: LearnerTypes
 using ..Data: get_df_loader_train
 using ..Metrics
+
+using Lux: Training, reactant_device
 
 export CallBack, init_logger, update_logger!, agg_logger
 
@@ -15,8 +16,8 @@ struct CallBack{F,D}
     deval::D
 end
 
-function (cb::CallBack)(logger, iter, m)
-    metric = Metrics.get_metric(m, cb.feval, cb.deval)
+function (cb::CallBack)(logger, iter, ts::Training.TrainState)
+    metric = Metrics.get_metric(ts, cb.feval, cb.deval)
     update_logger!(logger; iter, metric)
     return nothing
 end
@@ -30,9 +31,11 @@ function CallBack(
     offset_name=nothing
 )
 
+    dev = reactant_device()
     batchsize = config.batchsize
     feval = metric_dict[config.metric]
-    deval = get_df_loader_train(deval; feature_names, target_name, weight_name, offset_name, batchsize)
+    deval = get_df_loader_train(deval; feature_names, target_name, weight_name, offset_name, batchsize) |> dev
+
     return CallBack(feval, deval)
 end
 
@@ -88,7 +91,7 @@ function agg_logger(logger_raw::Vector{Dict})
     logger = Dict(
         :name => _l1[:name],
         :maximise => _l1[:maximise],
-        :early_stopping_rounds => _l1[:name],
+        :early_stopping_rounds => _l1[:early_stopping_rounds],
         :metrics => metrics,
         :best_iters => best_iters,
         :best_iter => best_iter,

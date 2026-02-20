@@ -3,7 +3,7 @@ module MLJ
 using Tables
 using DataFrames
 import ..Learners: NeuroTabRegressor, NeuroTabClassifier, LearnerTypes
-import ..Fit: init, fit_iter!
+import ..Fit: init, fit_iter!, _sync_params_to_model!
 import MLJModelInterface as MMI
 import MLJModelInterface: fit, update, predict, schema
 
@@ -38,6 +38,7 @@ function fit(
   end
   Fit._sync_to_cpu!(fitresult, cache)
 
+  _sync_params_to_model!(fitresult, cache)
   report = (features=fitresult.info[:feature_names],)
   return fitresult, cache, report
 end
@@ -61,7 +62,7 @@ function update(
     while fitresult.info[:nrounds] < model.nrounds
       fit_iter!(fitresult, cache)
     end
-    Fit._sync_to_cpu!(fitresult, cache)
+    _sync_params_to_model!(fitresult, cache)
     report = (features=fitresult.info[:feature_names],)
   else
     fitresult, cache, report = fit(model, verbosity, A, y, w)

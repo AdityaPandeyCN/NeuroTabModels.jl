@@ -1,9 +1,11 @@
 module Metrics
 
-export metric_dict, is_maximise
+export metric_dict, is_maximise, get_metric
 
 import Statistics: mean, std
-import Flux: logσ, logsoftmax, softmax, relu, hardsigmoid, onehotbatch
+import NNlib: logsigmoid, logsoftmax, softmax, relu, hardsigmoid
+using Lux
+using Reactant
 
 """
     mse(x, y; agg=mean)
@@ -11,15 +13,15 @@ import Flux: logσ, logsoftmax, softmax, relu, hardsigmoid, onehotbatch
     mse(x, y, w, offset; agg=mean)
 """
 function mse(m, x, y; agg=mean)
-    metric = agg((m(x) .- y) .^ 2)
+    metric = agg((vec(m(x)) .- vec(y)) .^ 2)
     return metric
 end
 function mse(m, x, y, w; agg=mean)
-    metric = agg((m(x) .- y) .^ 2 .* w)
+    metric = agg((vec(m(x)) .- vec(y)) .^ 2 .* vec(w))
     return metric
 end
 function mse(m, x, y, w, offset; agg=mean)
-    metric = agg((m(x) .+ offset .- y) .^ 2 .* w)
+    metric = agg((vec(m(x)) .+ vec(offset) .- vec(y)) .^ 2 .* vec(w))
     return metric
 end
 
@@ -29,15 +31,15 @@ end
     mae(x, y, w, offset; agg=mean)
 """
 function mae(m, x, y; agg=mean)
-    metric = agg(abs.(m(x) .- y))
+    metric = agg(abs.(vec(m(x)) .- vec(y)))
     return metric
 end
 function mae(m, x, y, w; agg=mean)
-    metric = agg(abs.(m(x) .- y) .* w)
+    metric = agg(abs.(vec(m(x)) .- vec(y)) .* vec(w))
     return metric
 end
 function mae(m, x, y, w, offset; agg=mean)
-    metric = agg(abs.(m(x) .+ offset .- y) .* w)
+    metric = agg(abs.(vec(m(x)) .+ vec(offset) .- vec(y)) .* vec(w))
     return metric
 end
 
@@ -48,18 +50,18 @@ end
     logloss(x, y, w, offset; agg=mean)
 """
 function logloss(m, x, y; agg=mean)
-    p = m(x)
-    metric = agg((1 .- y) .* p .- logσ.(p))
+    p = vec(m(x))
+    metric = agg((1 .- vec(y)) .* p .- logsigmoid.(p))
     return metric
 end
 function logloss(m, x, y, w; agg=mean)
-    p = m(x)
-    metric = agg(((1 .- y) .* p .- logσ.(p)) .* w)
+    p = vec(m(x))
+    metric = agg(((1 .- vec(y)) .* p .- logsigmoid.(p)) .* vec(w))
     return metric
 end
 function logloss(m, x, y, w, offset; agg=mean)
-    p = m(x) .+ offset
-    metric = agg(((1 .- y) .* p .- logσ.(p)) .* w)
+    p = vec(m(x)) .+ vec(offset)
+    metric = agg(((1 .- vec(y)) .* p .- logsigmoid.(p)) .* vec(w))
     return metric
 end
 
@@ -71,23 +73,23 @@ end
 """
 function tweedie(m, x, y; agg=mean)
     rho = eltype(x)(1.5)
-    p = exp.(m(x))
-    agg(2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* p .^ (1 - rho) / (1 - rho) +
+    p = exp.(vec(m(x)))
+    agg(2 .* (vec(y) .^ (2 - rho) / (1 - rho) / (2 - rho) - vec(y) .* p .^ (1 - rho) / (1 - rho) +
               p .^ (2 - rho) / (2 - rho))
     )
 end
 function tweedie(m, x, y, w)
     agg = mean
     rho = eltype(x)(1.5)
-    p = exp.(m(x))
-    agg(w .* 2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* p .^ (1 - rho) / (1 - rho) +
+    p = exp.(vec(m(x)))
+    agg(vec(w) .* 2 .* (vec(y) .^ (2 - rho) / (1 - rho) / (2 - rho) - vec(y) .* p .^ (1 - rho) / (1 - rho) +
                    p .^ (2 - rho) / (2 - rho))
     )
 end
 function tweedie(m, x, y, w, offset; agg=mean)
     rho = eltype(x)(1.5)
-    p = exp.(m(x) .+ offset)
-    agg(w .* 2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* p .^ (1 - rho) / (1 - rho) +
+    p = exp.(vec(m(x)) .+ vec(offset))
+    agg(vec(w) .* 2 .* (vec(y) .^ (2 - rho) / (1 - rho) / (2 - rho) - vec(y) .* p .^ (1 - rho) / (1 - rho) +
                    p .^ (2 - rho) / (2 - rho))
     )
 end
@@ -100,34 +102,28 @@ end
 function mlogloss(m, x, y; agg=mean)
     p = logsoftmax(m(x); dims=1)
     k = size(p, 1)
-    raw = dropdims(-sum(onehotbatch(y, 1:k) .* p; dims=1); dims=1)
+    raw = vec(-sum(((UInt32(1):UInt32(k)) .== reshape(y, 1, :)) .* p; dims=1))
     metric = agg(raw)
     return metric
 end
 function mlogloss(m, x, y, w; agg=mean)
     p = logsoftmax(m(x); dims=1)
     k = size(p, 1)
-    raw = dropdims(-sum(onehotbatch(y, 1:k) .* p; dims=1); dims=1)
-    metric = agg(raw .* w)
+    raw = vec(-sum(((UInt32(1):UInt32(k)) .== reshape(y, 1, :)) .* p; dims=1))
+    metric = agg(raw .* vec(w))
     return metric
 end
 function mlogloss(m, x, y, w, offset; agg=mean)
     p = logsoftmax(m(x) .+ offset; dims=1)
     k = size(p, 1)
-    raw = dropdims(-sum(onehotbatch(y, 1:k) .* p; dims=1); dims=1)
-    metric = agg(raw .* w)
+    raw = vec(-sum(((UInt32(1):UInt32(k)) .== reshape(y, 1, :)) .* p; dims=1))
+    metric = agg(raw .* vec(w))
     return metric
 end
 
 
-"""
-    gaussian_mle(μ::T, σ::T, y::T, w::T) where {T<:AbstractFloat}
-"""
-gaussian_mle(μ::T, σ::T, y::T) where {T<:AbstractFloat} =
-    -σ - (y - μ)^2 / (2 * max(T(2.0f-7), exp(2 * σ)))
+gaussian_loss_elt(μ, σ, y) = -σ - (y - μ)^2 / (2 * max(2.0f-7, exp(2 * σ)))
 
-gaussian_mle(μ::T, σ::T, y::T, w::T) where {T<:AbstractFloat} =
-    (-σ - (y - μ)^2 / (2 * max(T(2.0f-7), exp(2 * σ)))) * w
 
 """"
     gaussian_mle(x, y; agg=mean)
@@ -136,21 +132,25 @@ gaussian_mle(μ::T, σ::T, y::T, w::T) where {T<:AbstractFloat} =
 """
 function gaussian_mle(m, x, y; agg=mean)
     p = m(x)
-    metric = agg(gaussian_mle.(view(p, 1, :), view(p, 2, :), y))
+    metric = agg(gaussian_loss_elt.(view(p, 1, :), view(p, 2, :), vec(y)))
     return metric
 end
 function gaussian_mle(m, x, y, w; agg=mean)
     p = m(x)
-    metric = agg(gaussian_mle.(view(p, 1, :), view(p, 2, :), y, w))
+    metric = agg(gaussian_loss_elt.(view(p, 1, :), view(p, 2, :), vec(y)) .* vec(w))
     return metric
 end
 function gaussian_mle(m, x, y, w, offset; agg=mean)
     p = m(x) .+ offset
-    metric = agg(gaussian_mle.(view(p, 1, :), view(p, 2, :), y, w))
+    metric = agg(gaussian_loss_elt.(view(p, 1, :), view(p, 2, :), vec(y)) .* vec(w))
     return metric
 end
 
-function get_metric(m, f::Function, data)
+function get_metric(ts::Training.TrainState, f::Function, data)
+    ps, st = ts.parameters, Lux.testmode(ts.states)
+    model_compiled = @compile ts.model(first(data)[1], ps, st)
+    m = x -> first(model_compiled(x, ps, st))
+    
     metric = 0.0f0
     ws = 0.0f0
     for d in data
@@ -158,7 +158,7 @@ function get_metric(m, f::Function, data)
         if length(d) >= 3
             ws += sum(d[3])
         else
-            ws += last(size(d[2]))
+            ws += size(d[2], ndims(d[2]))
         end
     end
     metric = metric / ws

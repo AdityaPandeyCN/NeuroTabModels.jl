@@ -3,84 +3,83 @@ module Infer
 using ..Data
 using ..Losses
 using ..Models
+using ..Learners
 
-using Flux: sigmoid, softmax!, cpu
+using Lux
+using Lux: cpu_device, reactant_device
+using Reactant
+using NNlib: sigmoid, softmax
 using DataFrames: AbstractDataFrame
 import MLUtils: DataLoader
 
 export infer
 
-"""
-    infer(m::NeuroTabModel, data)
-Return the inference of a `NeuroTabModel` over `data`, where `data` is `AbstractDataFrame`.
-"""
-function infer(m::NeuroTabModel, data::AbstractDataFrame)
+function _get_device(device::Symbol)
+    if device == :gpu
+        Reactant.set_default_backend("gpu")
+        return reactant_device()
+    else
+        return cpu_device()
+    end
+end
+
+function _postprocess(::Type{<:Union{MSE,MAE}}, raw_preds)
+    return vcat([vec(p) for p in raw_preds]...)
+end
+
+function _postprocess(::Type{<:LogLoss}, raw_preds)
+    p = vcat([vec(p) for p in raw_preds]...)
+    return sigmoid.(p)
+end
+
+function _postprocess(::Type{<:MLogLoss}, raw_preds)
+    p_full = reduce(hcat, raw_preds)
+    p_soft = softmax(p_full; dims=1)
+    return Matrix(p_soft')
+end
+
+function _postprocess(::Type{<:GaussianMLE}, raw_preds)
+    p_full = reduce(hcat, raw_preds)
+    p_T = Matrix(p_full')
+    p_T[:, 2] .= exp.(p_T[:, 2])
+    return p_T
+end
+
+function _postprocess(::Type{<:Tweedie}, raw_preds)
+    p = vcat([vec(p) for p in raw_preds]...)
+    return exp.(p)
+end
+
+function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
+    dev = _get_device(device)
+    cdev = cpu_device()
+    ps = dev(m.info[:ps])
+    st = dev(m.info[:st])
+
+    raw_preds = Vector{AbstractArray}()
+
+    for b in data
+        x = b isa Tuple ? b[1] : b
+        
+        x_dev = dev(x)
+        y_pred, _ = Lux.apply(m.chain, x_dev, ps, st)
+        push!(raw_preds, cdev(y_pred))
+    end
+
+    return _postprocess(L, raw_preds)
+end
+
+function infer(m::NeuroTabModel, data::AbstractDataFrame; device=:cpu)
     dinfer = get_df_loader_infer(data; feature_names=m.info[:feature_names], batchsize=2048)
-    p = infer(m, dinfer)
-    return p
+    return infer(m, dinfer; device=device)
 end
 
-function (m::NeuroTabModel)(x::AbstractMatrix)
-    p = m.chain(x)
-    if size(p, 1) == 1
-        p = dropdims(p; dims=1)
-    end
-    return p
+function (m::NeuroTabModel)(data::AbstractDataFrame; device=:cpu)
+    return infer(m, data; device=device)
 end
 
-function (m::NeuroTabModel)(data::AbstractDataFrame)
-    dinfer = get_df_loader_infer(data; feature_names=m.info[:feature_names], batchsize=2048)
-    p = infer(m, dinfer)
-    return p
+function (m::NeuroTabModel)(x::AbstractMatrix; device=:cpu)
+    return infer(m, [(x,)]; device=device)
 end
 
-function infer(m::NeuroTabModel{L}, data::DataLoader) where {L<:Union{MSE,MAE}}
-    preds = Vector{Float32}[]
-    for x in data
-        push!(preds, Vector(m(x)))
-    end
-    p = vcat(preds...)
-    return p
 end
-
-function infer(m::NeuroTabModel{<:LogLoss}, data::DataLoader)
-    preds = Vector{Float32}[]
-    for x in data
-        push!(preds, Vector(m(x)))
-    end
-    p = vcat(preds...)
-    p .= sigmoid(p)
-    return p
-end
-
-function infer(m::NeuroTabModel{<:MLogLoss}, data::DataLoader)
-    preds = Matrix{Float32}[]
-    for x in data
-        push!(preds, Matrix(m(x)'))
-    end
-    p = vcat(preds...)
-    softmax!(p; dims=2)
-    return p
-end
-
-function infer(m::NeuroTabModel{<:GaussianMLE}, data::DataLoader)
-    preds = Matrix{Float32}[]
-    for x in data
-        push!(preds, Matrix(m(x)'))
-    end
-    p = vcat(preds...)
-    p[:, 2] .= exp.(p[:, 2])
-    return p
-end
-
-function infer(m::NeuroTabModel{L}, data::DataLoader) where {L<:Union{Tweedie}}
-    preds = Vector{Float32}[]
-    for x in data
-        push!(preds, Vector(m(x)))
-    end
-    p = vcat(preds...)
-    p .= exp.(p)
-    return p
-end
-
-end # module
