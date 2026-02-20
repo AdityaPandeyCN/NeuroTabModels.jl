@@ -52,7 +52,7 @@ function NeuroTreeConfig(; kwargs...)
         args[arg] = kwargs[arg]
     end
 
-    config = NeuroTreeConfig(
+    return NeuroTreeConfig(
         Symbol(args[:tree_type]),
         Symbol(args[:actA]),
         args[:depth],
@@ -64,16 +64,16 @@ function NeuroTreeConfig(; kwargs...)
         args[:init_scale],
         args[:MLE_tree_split],
     )
-
-    return config
 end
 
 function (config::NeuroTreeConfig)(; nfeats, outsize)
     function build_block(n_in, n_out)
-        create_tree(in_dim, out_dim) = NeuroTree(in_dim => out_dim;
+        create_tree(in_dim, out_dim) = NeuroTree(;
+            feats=in_dim,
+            outs=out_dim,
             tree_type=config.tree_type,
             depth=config.depth,
-            trees=config.ntrees, 
+            trees=config.ntrees,
             actA=act_dict[config.actA],
             scaler=config.scaler,
             init_scale=config.init_scale
@@ -82,26 +82,27 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
         if config.stack_size == 1
             return create_tree(n_in, n_out)
         end
-        
-        layers = [create_tree(n_in, config.hidden_size)]
-        
+
+        layers = Any[create_tree(n_in, config.hidden_size)]
+
         for _ in 1:(config.stack_size - 2)
             push!(layers, SkipConnection(create_tree(config.hidden_size, config.hidden_size), +))
         end
-        
+
         push!(layers, create_tree(config.hidden_size, n_out))
-        
+
         return Chain(layers...)
     end
 
-    if config.MLE_tree_split && outsize == 2
-        outsize ÷= 2
+    if config.MLE_tree_split
+        iseven(outsize) || error("MLE_tree_split requires an even `outsize` (e.g., 2 for μ and σ). Got: $outsize")
+        head_outsize = outsize ÷ 2
         chain = Chain(
             BatchNorm(nfeats),
             Parallel(
                 vcat,
-                build_block(nfeats, outsize),
-                build_block(nfeats, outsize),
+                build_block(nfeats, head_outsize),
+                build_block(nfeats, head_outsize),
             )
         )
     else
@@ -110,7 +111,7 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
             build_block(nfeats, outsize)
         )
     end
-    
+
     return chain
 end
 
