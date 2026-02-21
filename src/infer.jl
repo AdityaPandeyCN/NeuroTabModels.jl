@@ -8,6 +8,7 @@ using ..Learners
 using Lux
 using Lux: cpu_device, reactant_device
 using Reactant
+using Reactant: @compile
 using NNlib: sigmoid, softmax
 using DataFrames: AbstractDataFrame
 import MLUtils: DataLoader
@@ -58,12 +59,20 @@ function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
 
     raw_preds = Vector{AbstractArray}()
 
-    for b in data
-        x = b isa Tuple ? b[1] : b
-        
-        x_dev = dev(x)
-        y_pred, _ = Lux.apply(m.chain, x_dev, ps, st)
-        push!(raw_preds, cdev(y_pred))
+    if device == :gpu
+        x0 = let b = first(data); b isa Tuple ? b[1] : b end
+        model_compiled = @compile m.chain(dev(x0), ps, st)
+        for b in data
+            x = b isa Tuple ? b[1] : b
+            y_pred, _ = model_compiled(dev(x), ps, st)
+            push!(raw_preds, cdev(y_pred))
+        end
+    else
+        for b in data
+            x = b isa Tuple ? b[1] : b
+            y_pred, _ = Lux.apply(m.chain, x, ps, st)
+            push!(raw_preds, cdev(y_pred))
+        end
     end
 
     return _postprocess(L, raw_preds)

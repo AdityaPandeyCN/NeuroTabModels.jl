@@ -28,14 +28,7 @@ function _get_device(config)
     return reactant_device()
 end
 
-function init(
-    config::LearnerTypes,
-    df::AbstractDataFrame;
-    feature_names,
-    target_name,
-    weight_name=nothing,
-    offset_name=nothing
-)
+function init(config::LearnerTypes, df::AbstractDataFrame; feature_names, target_name, weight_name=nothing, offset_name=nothing)
     dev = _get_device(config)
     batchsize = config.batchsize
     nfeats = length(feature_names)
@@ -57,13 +50,8 @@ function init(
 
     data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize) |> dev
 
-    info = Dict(
-        :nrounds => 0,
-        :feature_names => feature_names,
-        :target_levels => target_levels,
-        :target_isordered => target_isordered,
-        :device => config.device
-    )
+    info = Dict(:nrounds => 0, :feature_names => feature_names, :target_levels => target_levels,
+                :target_isordered => target_isordered, :device => config.device)
 
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
@@ -77,51 +65,24 @@ function init(
 end
 
 """
-    function fit(
-        config::LearnerTypes,
-        dtrain;
-        feature_names,
-        target_name,
-        weight_name=nothing,
-        offset_name=nothing,
-        deval=nothing,
-        metric=nothing,
-        print_every_n=9999,
-        early_stopping_rounds=9999,
-        verbosity=1,
-    )
+    fit(config::LearnerTypes, dtrain; kwargs...)
+
 Training function of NeuroTabModels' internal API.
+
 # Arguments
+- `config::LearnerTypes`: The configuration object defining the model architecture and training hyperparameters (e.g., `NeuroTabClassifier`, `NeuroTabRegressor`).
+- `dtrain`: The training data, must be `<:AbstractDataFrame`.
 
-- `config::LearnerTypes`: The configuration object defining the model architecture, loss, and training hyperparameters.
-- `dtrain`: The training data. Must be `<:AbstractDataFrame`.
-
-# Keyword arguments
-
+# Keyword Arguments
 - `feature_names`: Required. A `Vector{Symbol}` or `Vector{String}` of the feature names to use.
 - `target_name`: Required. A `Symbol` or `String` indicating the name of the target variable.
-- `weight_name=nothing`: Optional. A `Symbol` or `String` indicating the sample weights column.
-- `offset_name=nothing`: Optional. A `Symbol` or `String` indicating the offset column.
-- `deval=nothing`: Optional. Evaluation data (`<:AbstractDataFrame`) for tracking metrics and early stopping.
-- `metric=nothing`: Optional. The evaluation metric to track (e.g., `:mse`, `:logloss`). 
-- `print_every_n=9999`: Integer. Logs training progress to the console every `N` epochs.
-- `early_stopping_rounds=9999`: Integer. Stops training if the evaluation metric does not improve for this many rounds.
-- `verbosity=1`: Integer. Controls the logging level (`0` for silent, `>0` for info).
-- `device=:cpu`: Symbol. Hardware device to use for training (`:cpu` or `:gpu`).
-- `gpuID=0`: Integer. Specifies which GPU to use if multiple are available.
+- `weight_name=nothing`: Optional `Symbol` or `String` for the sample weights column.
+- `offset_name=nothing`: Optional `Symbol` or `String` for the offset column.
+- `deval=nothing`: Optional `AbstractDataFrame` for tracking evaluation metrics and performing early stopping.
+- `print_every_n=9999`: Integer. Logs training progress every N epochs.
+- `verbosity=1`: Integer. Controls the logging level (0 for silent, >0 for info).
 """
-
-function fit(
-    config::LearnerTypes,
-    dtrain;
-    feature_names,
-    target_name,
-    weight_name=nothing,
-    offset_name=nothing,
-    deval=nothing,
-    print_every_n=9999,
-    verbosity=1
-)
+function fit(config::LearnerTypes, dtrain; feature_names, target_name, weight_name=nothing, offset_name=nothing, deval=nothing, print_every_n=9999, verbosity=1)
     feature_names, target_name = Symbol.(feature_names), Symbol(target_name)
     weight_name = isnothing(weight_name) ? nothing : Symbol(weight_name)
     offset_name = isnothing(offset_name) ? nothing : Symbol(offset_name)
@@ -130,7 +91,7 @@ function fit(
 
     logger = nothing
     if !isnothing(deval)
-        cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)
+        cb = CallBack(config, deval, cache[:train_state]; feature_names, target_name, weight_name, offset_name)
         logger = init_logger(config)
         cb(logger, 0, cache[:train_state])
         (verbosity > 0) && @info "Init training" metric = logger[:metrics][end]
@@ -174,25 +135,5 @@ function fit_iter!(m, cache)
     m.info[:nrounds] += 1
     return nothing
 end
-# function fit_iter!(m, cache)
-#     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-#     GC.gc(true)
-#     if typeof(cache[:dtrain]) <: CUDA.CuIterator
-#         CUDA.reclaim()
-#     end
-#     for d in data
-#         grads = compute_grads(loss, m, d)
-#         Optimisers.update!(opts, m, grads)
-#     end
-#     m.info[:nrounds] += 1
-#     return nothing
-# end
-
-# function compute_grads(loss, model, batch)
-#     dup_model = Duplicated(model)
-#     const_args = map(Const, batch)
-#     grads = Flux.gradient((m, args...) -> loss(m, args...), dup_model, const_args...)
-#     return grads[1]
-# end
 
 end
