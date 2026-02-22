@@ -148,28 +148,20 @@ end
 function get_metric(ts::Training.TrainState, data, eval_compiled)
     ps, st = ts.parameters, Lux.testmode(ts.states)
 
-    metric_accum = nothing
-    ws_accum = nothing
-    
-    for d in data
-        m_val, w_val = eval_compiled(d..., ps, st)
-        
-        if isnothing(metric_accum)
-            metric_accum = m_val
-            ws_accum = w_val
-        else
-            metric_accum = metric_accum .+ m_val
-            ws_accum = ws_accum .+ w_val
-        end
-    end
-    
-    to_cpu(x) = x isa Reactant.ConcretePJRTNumber || x isa Reactant.ConcretePJRTArray ? first(Array(x)) : x
+    d0 = first(data)
+    metric_accum, ws_accum = eval_compiled(d0..., ps, st)
 
-    final_metric = Float32(to_cpu(metric_accum))
-    final_ws = Float32(to_cpu(ws_accum))
-    
-    return final_metric / final_ws
+    for (i, d) in enumerate(data)
+        i == 1 && continue
+        m_val, w_val = eval_compiled(d..., ps, st)
+        metric_accum = metric_accum .+ m_val
+        ws_accum = ws_accum .+ w_val
+    end
+
+    to_cpu(x) = x isa Reactant.ConcretePJRTNumber || x isa Reactant.ConcretePJRTArray ? first(Array(x)) : x
+    return Float32(to_cpu(metric_accum)) / Float32(to_cpu(ws_accum))
 end
+
 const metric_dict = Dict(
     :mse => mse,
     :mae => mae,
