@@ -7,36 +7,43 @@ using ..Learners: LearnerTypes
 using ..Data: get_df_loader_train
 using ..Metrics
 
-using Lux: Training, reactant_device
+using Lux: Training, reactant_device, testmode
+using Reactant: @compile
 
 export CallBack, init_logger, update_logger!, agg_logger
 
-struct CallBack{F,D}
+struct CallBack{F,D,M}
     feval::F
     deval::D
+    model_compiled::M
 end
 
 function (cb::CallBack)(logger, iter, ts::Training.TrainState)
-    metric = Metrics.get_metric(ts, cb.feval, cb.deval)
+    metric = Metrics.get_metric(ts, cb.feval, cb.deval, cb.model_compiled)
     update_logger!(logger; iter, metric)
     return nothing
 end
 
 function CallBack(
     config::LearnerTypes,
-    deval::AbstractDataFrame;
+    deval::AbstractDataFrame,
+    ts::Training.TrainState;
     feature_names,
     target_name,
     weight_name=nothing,
     offset_name=nothing
 )
-
     dev = reactant_device()
     batchsize = config.batchsize
     feval = metric_dict[config.metric]
     deval = get_df_loader_train(deval; feature_names, target_name, weight_name, offset_name, batchsize) |> dev
 
-    return CallBack(feval, deval)
+    chain = ts.model
+    ps, st = ts.parameters, testmode(ts.states)
+    x0 = first(deval)[1]
+    model_compiled = @compile chain(x0, ps, st)
+
+    return CallBack(feval, deval, model_compiled)
 end
 
 function init_logger(config::LearnerTypes)
