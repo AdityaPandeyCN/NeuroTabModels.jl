@@ -60,12 +60,20 @@ function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
     raw_preds = Vector{AbstractArray}()
 
     if device == :gpu
-        x0 = let b = first(data); b isa Tuple ? b[1] : b end
+        b_first = first(data)
+        x0 = b_first isa Tuple ? b_first[1] : b_first
         model_compiled = @compile m.chain(dev(x0), ps, st)
+        
         for b in data
             x = b isa Tuple ? b[1] : b
-            y_pred, _ = model_compiled(dev(x), ps, st)
-            push!(raw_preds, cdev(y_pred))
+            
+            if size(x) == size(x0)
+                y_pred, _ = model_compiled(dev(x), ps, st)
+                push!(raw_preds, cdev(y_pred))
+            else
+                y_pred, _ = Reactant.@jit Lux.apply(m.chain, dev(x), ps, st)
+                push!(raw_preds, cdev(y_pred))
+            end
         end
     else
         for b in data

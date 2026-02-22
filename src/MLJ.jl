@@ -36,8 +36,7 @@ function fit(
   while fitresult.info[:nrounds] < model.nrounds
     fit_iter!(fitresult, cache)
   end
-  Fit._sync_to_cpu!(fitresult, cache)
-
+  
   _sync_params_to_model!(fitresult, cache)
   report = (features=fitresult.info[:feature_names],)
   return fitresult, cache, report
