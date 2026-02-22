@@ -6,6 +6,7 @@ import Statistics: mean, std
 import NNlib: logsigmoid, logsoftmax, softmax, relu, hardsigmoid
 using Lux
 using Lux: Training
+using Reactant
 
 """
     mse(m, x, y; agg=mean)
@@ -147,16 +148,29 @@ end
 function get_metric(ts::Training.TrainState, data, eval_compiled)
     ps, st = ts.parameters, Lux.testmode(ts.states)
 
-    metric = 0.0f0
-    ws = 0.0f0
+    metric_accum = nothing
+    ws_accum = nothing
+    
     for d in data
         m_val, w_val = eval_compiled(d..., ps, st)
-        metric += Float32(m_val)
-        ws += Float32(w_val)
+        
+        if isnothing(metric_accum)
+            metric_accum = m_val
+            ws_accum = w_val
+        else
+            metric_accum = metric_accum .+ m_val
+            ws_accum = ws_accum .+ w_val
+        end
     end
-    return metric / ws
-end
+    
+    # helper to safely move to CPU only if it's a Reactant GPU object
+    to_cpu(x) = x isa Reactant.ConcretePJRTNumber || x isa Reactant.ConcretePJRTArray ? first(Array(x)) : x
 
+    final_metric = Float32(to_cpu(metric_accum))
+    final_ws = Float32(to_cpu(ws_accum))
+    
+    return final_metric / final_ws
+end
 const metric_dict = Dict(
     :mse => mse,
     :mae => mae,
