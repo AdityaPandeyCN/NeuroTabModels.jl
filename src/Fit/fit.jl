@@ -160,6 +160,7 @@ function fit(
         m.info[:nrounds] += 1
 
         iter = m.info[:nrounds]
+
         if !isnothing(logger)
             cb(logger, iter, m)
             if verbosity > 0 && iter % print_every_n == 0
