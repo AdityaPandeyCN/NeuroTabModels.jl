@@ -3,16 +3,9 @@ module NeuroTrees
 export NeuroTreeConfig
 
 using Random
-import .Threads: @threads
-
-# using CUDA
-# import Flux
-# import Flux: @layer, trainmode!, gradient, Chain, DataLoader, cpu, gpu
-# import Flux: relu, logσ, logsoftmax, softmax, softmax!, sigmoid, sigmoid_fast, hardsigmoid, tanh, tanh_fast, hardtanh, softplus, onecold, onehotbatch, glorot_uniform
-# import Flux: BatchNorm, Dense, Dropout, MultiHeadAttention, Parallel
-
 using Lux
-using NNlib: softplus, sigmoid, sigmoid_fast, hardsigmoid, tanh, tanh_fast, hardtanh
+using LuxCore
+using NNlib: softplus, sigmoid, sigmoid_fast, hardsigmoid, tanh_fast, hardtanh
 
 import ..Losses: get_loss_type, GaussianMLE
 import ..Models: Architecture
@@ -33,8 +26,6 @@ struct NeuroTreeConfig <: Architecture
 end
 
 function NeuroTreeConfig(; kwargs...)
-
-    # defaults arguments
     args = Dict{Symbol,Any}(
         :tree_type => :binary,
         :actA => :identity,
@@ -49,21 +40,19 @@ function NeuroTreeConfig(; kwargs...)
     )
 
     args_ignored = setdiff(keys(kwargs), keys(args))
-    args_ignored_str = join(args_ignored, ", ")
     length(args_ignored) > 0 &&
-        @warn "Following $(length(args_ignored)) provided arguments will be ignored: $(args_ignored_str)."
+        @warn "Following $(length(args_ignored)) provided arguments will be ignored: $(join(args_ignored, ", "))."
 
     args_default = setdiff(keys(args), keys(kwargs))
-    args_default_str = join(args_default, ", ")
     length(args_default) > 0 &&
-        @info "Following $(length(args_default)) arguments were not provided and will be set to default: $(args_default_str)."
+        @info "Following $(length(args_default)) arguments were not provided and will be set to default: $(join(args_default, ", "))."
 
     args_override = intersect(keys(args), keys(kwargs))
     for arg in args_override
         args[arg] = kwargs[arg]
     end
 
-    config = NeuroTreeConfig(
+    return NeuroTreeConfig(
         Symbol(args[:tree_type]),
         Symbol(args[:actA]),
         args[:depth],
@@ -75,89 +64,71 @@ function NeuroTreeConfig(; kwargs...)
         args[:init_scale],
         args[:MLE_tree_split],
     )
-
-    return config
 end
 
 function (config::NeuroTreeConfig)(; nfeats, outsize)
+    function build_block(n_in, n_out)
+        create_tree(in_dim, out_dim) = NeuroTree(;
+            feats=in_dim,
+            outs=out_dim,
+            tree_type=config.tree_type,
+            depth=config.depth,
+            trees=config.ntrees,
+            actA=act_dict[config.actA],
+            scaler=config.scaler,
+            init_scale=config.init_scale
+        )
 
-    if config.MLE_tree_split && outsize == 2
-        outsize ÷= 2
+        if config.stack_size == 1
+            return create_tree(n_in, n_out)
+        end
+
+        layers = Any[create_tree(n_in, config.hidden_size)]
+
+        for _ in 1:(config.stack_size - 2)
+            push!(layers, SkipConnection(create_tree(config.hidden_size, config.hidden_size), +))
+        end
+
+        push!(layers, create_tree(config.hidden_size, n_out))
+
+        return Chain(layers...)
+    end
+
+    if config.MLE_tree_split
+        iseven(outsize) || error("MLE_tree_split requires an even `outsize` (e.g., 2 for μ and σ). Got: $outsize")
+        head_outsize = outsize ÷ 2
         chain = Chain(
-            BatchNorm(nfeats),
+            BatchNorm(nfeats, track_stats=false),
             Parallel(
                 vcat,
-                StackTree(nfeats => outsize;
-                    tree_type=config.tree_type,
-                    depth=config.depth,
-                    ntrees=config.ntrees,
-                    proj_size=config.proj_size,
-                    stack_size=config.stack_size,
-                    hidden_size=config.hidden_size,
-                    actA=act_dict[config.actA],
-                    scaler=config.scaler,
-                    init_scale=config.init_scale),
-                StackTree(nfeats => outsize;
-                    tree_type=config.tree_type,
-                    depth=config.depth,
-                    ntrees=config.ntrees,
-                    proj_size=config.proj_size,
-                    stack_size=config.stack_size,
-                    hidden_size=config.hidden_size,
-                    actA=act_dict[config.actA],
-                    scaler=config.scaler,
-                    init_scale=config.init_scale)
+                build_block(nfeats, head_outsize),
+                build_block(nfeats, head_outsize),
             )
         )
     else
-        # chain = Chain(
-        #     BatchNorm(nfeats),
-        #     StackTree(nfeats => outsize;
-        #         tree_type=config.tree_type,
-        #         depth=config.depth,
-        #         ntrees=config.ntrees,
-        #         proj_size=config.proj_size,
-        #         stack_size=config.stack_size,
-        #         hidden_size=config.hidden_size,
-        #         actA=act_dict[config.actA],
-        #         scaler=config.scaler,
-        #         init_scale=config.init_scale)
-        # )
         chain = Chain(
             BatchNorm(nfeats),
-            NeuroTree(nfeats => outsize;
-                tree_type=config.tree_type,
-                depth=config.depth,
-                trees=config.ntrees,
-                actA=act_dict[config.actA],
-                scaler=config.scaler,
-                init_scale=config.init_scale),
+            build_block(nfeats, outsize)
         )
     end
-end
 
+    return chain
+end
 
 function _identity_act(x)
     return x ./ sum(abs.(x), dims=2)
 end
+
 function _tanh_act(x)
-    x = Flux.tanh_fast.(x)
+    x = tanh_fast.(x)
     return x ./ sum(abs.(x), dims=2)
 end
+
 function _hardtanh_act(x)
-    x = Flux.hardtanh.(x)
+    x = hardtanh.(x)
     return x ./ sum(abs.(x), dims=2)
 end
 
-"""
-    act_dict = Dict(
-        :identity => _identity_act,
-        :tanh => _tanh_act,
-        :hardtanh => _hardtanh_act,
-    )
-
-Dictionary mapping features activation name to their function.
-"""
 const act_dict = Dict(
     :identity => _identity_act,
     :tanh => _tanh_act,

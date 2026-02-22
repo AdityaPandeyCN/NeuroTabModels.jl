@@ -1,6 +1,6 @@
 module Fit
 
-export fit
+export fit, fit_iter!
 
 using ..Data
 using ..Learners
@@ -10,14 +10,11 @@ using ..Metrics
 
 import Random: Xoshiro
 import MLJModelInterface: fit
-import CUDA, cuDNN
-import Optimisers
-import Optimisers: OptimiserChain, WeightDecay, Adam, NAdam, Nesterov, Descent, Momentum, AdaDelta
+import Optimisers: OptimiserChain, WeightDecay, NAdam
 
 using Lux
-using Enzyme, Reactant
-# using Zygote
-# using Mooncake
+using Reactant
+using Lux: cpu_device, reactant_device
 
 using DataFrames
 using CategoricalArrays
@@ -25,28 +22,32 @@ using CategoricalArrays
 include("callback.jl")
 using .CallBacks
 
+function _get_device(config)
+    backend = config.device == :gpu ? "gpu" : "cpu"
+    Reactant.set_default_backend(backend)
+    return reactant_device()
+end
+
 function init(
     config::LearnerTypes,
     df::AbstractDataFrame;
     feature_names,
     target_name,
     weight_name=nothing,
-    offset_name=nothing,
+    offset_name=nothing
 )
-
-    device = config.device
+    dev = _get_device(config)
     batchsize = config.batchsize
     nfeats = length(feature_names)
     L = get_loss_type(config.loss)
-    # loss = get_loss_fn(config.loss)
-    loss = MSELoss()
-    # loss = BinaryCrossEntropyLoss(; logits=Val(true)),
+    lux_loss = get_loss_fn(L)
 
     target_levels = nothing
     target_isordered = false
     outsize = 1
+
     if L <: MLogLoss
-        eltype(df[!, target_name]) <: CategoricalValue || error("Target variable `$target_name` must have its elements `<: CategoricalValue`")
+        eltype(df[!, target_name]) <: CategoricalValue || error("Target `$target_name` must be `<: CategoricalValue`")
         target_levels = CategoricalArrays.levels(df[!, target_name])
         target_isordered = isordered(df[!, target_name])
         outsize = length(target_levels)
@@ -54,38 +55,30 @@ function init(
         outsize = 2
     end
 
-    Reactant.set_default_backend("gpu")
-    dev = reactant_device()
-    backend = AutoReactant()
-    # dev = cpu_device()
-    # dev = gpu_device()
-    # backend = AutoZygote()
-    # backend = AutoMooncake()
-
-    data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize, device) |> dev
+    data = get_df_loader_train(df; feature_names, target_name, weight_name, offset_name, batchsize) |> dev
 
     info = Dict(
         :nrounds => 0,
         :feature_names => feature_names,
         :target_levels => target_levels,
-        :target_isordered => target_isordered)
+        :target_isordered => target_isordered,
+        :device => config.device
+    )
 
     chain = config.arch(; nfeats, outsize)
     m = NeuroTabModel(L, chain, info)
 
-    # Parameter and State Variables
     rng = Xoshiro(config.seed)
     ps, st = Lux.setup(rng, m.chain) |> dev
     opt = OptimiserChain(NAdam(config.lr), WeightDecay(config.wd))
     ts = Training.TrainState(m.chain, ps, st, opt)
 
-    cache = (data=data, ts=ts, loss=loss, backend=backend, info=info)
-    return m, cache
+    return m, Dict(:data => data, :lux_loss => lux_loss, :train_state => ts)
 end
 
 """
     function fit(
-        config::NeuroTypes,
+        config::LearnerTypes,
         dtrain;
         feature_names,
         target_name,
@@ -96,27 +89,28 @@ end
         print_every_n=9999,
         early_stopping_rounds=9999,
         verbosity=1,
-        device=:cpu,
-        gpuID=0,
     )
-
 Training function of NeuroTabModels' internal API.
-
 # Arguments
 
-- `config::LearnerTypes`
-- `dtrain`: Must be `<:AbstractDataFrame`  
+- `config::LearnerTypes`: The configuration object defining the model architecture, loss, and training hyperparameters.
+- `dtrain`: The training data. Must be `<:AbstractDataFrame`.
 
 # Keyword arguments
 
-- `feature_names`:          Required kwarg, a `Vector{Symbol}` or `Vector{String}` of the feature names.
-- `target_name`             Required kwarg, a `Symbol` or `String` indicating the name of the target variable.  
-- `weight_name=nothing`
-- `offset_name=nothing`
-- `deval=nothing`           Data for tracking evaluation metric and perform early stopping.
-- `print_every_n=9999`
-- `verbosity=1`
+- `feature_names`: Required. A `Vector{Symbol}` or `Vector{String}` of the feature names to use.
+- `target_name`: Required. A `Symbol` or `String` indicating the name of the target variable.
+- `weight_name=nothing`: Optional. A `Symbol` or `String` indicating the sample weights column.
+- `offset_name=nothing`: Optional. A `Symbol` or `String` indicating the offset column.
+- `deval=nothing`: Optional. Evaluation data (`<:AbstractDataFrame`) for tracking metrics and early stopping.
+- `metric=nothing`: Optional. The evaluation metric to track (e.g., `:mse`, `:logloss`). 
+- `print_every_n=9999`: Integer. Logs training progress to the console every `N` epochs.
+- `early_stopping_rounds=9999`: Integer. Stops training if the evaluation metric does not improve for this many rounds.
+- `verbosity=1`: Integer. Controls the logging level (`0` for silent, `>0` for info).
+- `device=:cpu`: Symbol. Hardware device to use for training (`:cpu` or `:gpu`).
+- `gpuID=0`: Integer. Specifies which GPU to use if multiple are available.
 """
+
 function fit(
     config::LearnerTypes,
     dtrain;
@@ -128,41 +122,28 @@ function fit(
     print_every_n=9999,
     verbosity=1
 )
-
-    feature_names = Symbol.(feature_names)
-    target_name = Symbol(target_name)
+    feature_names, target_name = Symbol.(feature_names), Symbol(target_name)
     weight_name = isnothing(weight_name) ? nothing : Symbol(weight_name)
     offset_name = isnothing(offset_name) ? nothing : Symbol(offset_name)
 
     m, cache = init(config, dtrain; feature_names, target_name, weight_name, offset_name)
 
-    # initialize callback and logger if tracking eval data
     logger = nothing
     if !isnothing(deval)
         cb = CallBack(config, deval; feature_names, target_name, weight_name, offset_name)
         logger = init_logger(config)
-        cb(logger, 0, m)
+        cb(logger, 0, cache[:train_state])
         (verbosity > 0) && @info "Init training" metric = logger[:metrics][end]
     else
         (verbosity > 0) && @info "Init training"
     end
 
-    ts = cache[:ts]
     while m.info[:nrounds] < config.nrounds
-        for d in cache[:data]
-            gs, loss, stats, ts = Training.single_train_step!(
-                cache.backend,
-                cache.loss,
-                (d[1], d[2]),
-                ts
-            )
-        end
-        m.info[:nrounds] += 1
-
+        fit_iter!(m, cache)
         iter = m.info[:nrounds]
 
         if !isnothing(logger)
-            cb(logger, iter, m)
+            cb(logger, iter, cache[:train_state])
             if verbosity > 0 && iter % print_every_n == 0
                 @info "iter $iter" metric = logger[:metrics][:metric][end]
             end
@@ -171,8 +152,27 @@ function fit(
             (verbosity > 0 && iter % print_every_n == 0) && @info "iter $iter"
         end
     end
+
+    _sync_params_to_model!(m, cache)
     m.info[:logger] = logger
-    return m, ts
+    return m
+end
+
+function _sync_params_to_model!(m, cache)
+    ts = cache[:train_state]
+    cdev = cpu_device()
+    m.info[:ps] = cdev(ts.parameters)
+    m.info[:st] = cdev(Lux.testmode(ts.states))
+end
+
+function fit_iter!(m, cache)
+    ts, lux_loss = cache[:train_state], cache[:lux_loss]
+    for d in cache[:data]
+        _, loss, _, ts = Training.single_train_step!(AutoEnzyme(), lux_loss, d, ts)
+    end
+    cache[:train_state] = ts
+    m.info[:nrounds] += 1
+    return nothing
 end
 
 end

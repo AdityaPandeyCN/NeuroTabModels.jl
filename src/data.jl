@@ -7,11 +7,9 @@ import MLUtils: DataLoader
 
 using DataFrames
 using CategoricalArrays
-using CUDA: CuIterator
 
 """
     ContainerTrain
-
 """
 struct ContainerTrain{A<:AbstractMatrix,B,C,D}
     x::A
@@ -48,7 +46,6 @@ function getindex(data::ContainerTrain{A,B,C,D}, idx::AbstractVector) where {A,B
     return (x, y, w, offset)
 end
 
-
 function get_df_loader_train(
     df::AbstractDataFrame;
     feature_names,
@@ -56,8 +53,7 @@ function get_df_loader_train(
     weight_name=nothing,
     offset_name=nothing,
     batchsize,
-    shuffle=true,
-    device=:cpu)
+    shuffle=true)
 
     feature_names = Symbol.(feature_names)
     x = Matrix{Float32}(Matrix{Float32}(select(df, feature_names))')
@@ -83,10 +79,8 @@ function get_df_loader_train(
     return dtrain
 end
 
-
 """
     ContainerInfer
-
 """
 struct ContainerInfer{A<:AbstractMatrix,D}
     x::A
@@ -114,8 +108,7 @@ function get_df_loader_infer(
     df::AbstractDataFrame;
     feature_names,
     offset_name=nothing,
-    batchsize,
-    device=:cpu)
+    batchsize)
 
     feature_names = Symbol.(feature_names)
     x = Matrix{Float32}(Matrix{Float32}(select(df, feature_names))')
@@ -123,17 +116,13 @@ function get_df_loader_infer(
     offset = if isnothing(offset_name)
         nothing
     else
-        isa(offset_name, String) ? Float32.(df[!, offset_name]) : offset = Matrix{Float32}(Matrix{Float32}(df[!, offset_name])')
+        isa(offset_name, String) ? Float32.(df[!, offset_name]) : Matrix{Float32}(Matrix{Float32}(df[!, offset_name])')
     end
 
     container = ContainerInfer(x, offset)
     batchsize = min(batchsize, length(container))
-    dinfer = DataLoader(container; shuffle=false, batchsize, partial=true, parallel=false)
-    if device == :gpu
-        return CuIterator(dinfer)
-    else
-        return dinfer
-    end
+    dinfer = DataLoader(container; shuffle=false, batchsize, partial=false, parallel=false)
+    return dinfer
 end
 
 end #module

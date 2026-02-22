@@ -3,8 +3,9 @@ module Losses
 export get_loss_fn, get_loss_type
 export LossType, MSE, MAE, LogLoss, MLogLoss, GaussianMLE, Tweedie
 
-import Statistics: mean, std
-import Flux: logσ, logsoftmax, softmax, relu, hardsigmoid, onehotbatch
+import Statistics: mean
+import NNlib: logsigmoid
+using Lux
 
 abstract type LossType end
 abstract type MSE <: LossType end
@@ -14,115 +15,94 @@ abstract type MLogLoss <: LossType end
 abstract type GaussianMLE <: LossType end
 abstract type Tweedie <: LossType end
 
-function mse(m, x, y)
-    mean((m(x) .- y) .^ 2)
-end
-function mse(m, x, y, w)
-    sum((m(x) .- y) .^ 2 .* w) / sum(w)
-end
-function mse(m, x, y, w, offset)
-    sum((m(x) .+ offset .- y) .^ 2 .* w) / sum(w)
+struct MSE_Loss <: Lux.AbstractLossFunction end
+(::MSE_Loss)(p::AbstractArray, y) = mean((p .- y) .^ 2)
+(::MSE_Loss)(p::AbstractArray, y, w) = sum((p .- y) .^ 2 .* w) / sum(w)
+(::MSE_Loss)(p::AbstractArray, y, w, offset) = sum((p .+ offset .- y) .^ 2 .* w) / sum(w)
+
+struct MAE_Loss <: Lux.AbstractLossFunction end
+(::MAE_Loss)(p::AbstractArray, y) = mean(abs.(p .- y))
+(::MAE_Loss)(p::AbstractArray, y, w) = sum(abs.(p .- y) .* w) / sum(w)
+(::MAE_Loss)(p::AbstractArray, y, w, offset) = sum(abs.(p .+ offset .- y) .* w) / sum(w)
+
+struct Log_Loss <: Lux.AbstractLossFunction end
+(::Log_Loss)(p::AbstractArray, y) = mean((1 .- y) .* p .- logsigmoid.(p))
+(::Log_Loss)(p::AbstractArray, y, w) = sum(w .* ((1 .- y) .* p .- logsigmoid.(p))) / sum(w)
+function (::Log_Loss)(p::AbstractArray, y, w, offset)
+    p = p .+ offset
+    sum(w .* ((1 .- y) .* p .- logsigmoid.(p))) / sum(w)
 end
 
-function mae(m, x, y)
-    mean(abs.(m(x) .- y))
+struct Tweedie_Loss{T} <: Lux.AbstractLossFunction
+    rho::T
 end
-function mae(m, x, y, w)
-    sum(abs.(m(x) .- y) .* w) / sum(w)
+Tweedie_Loss() = Tweedie_Loss(1.5f0)
+function (l::Tweedie_Loss)(p::AbstractArray, y)
+    rho = eltype(p)(l.rho)
+    ep = exp.(p)
+    mean(2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* ep .^ (1 - rho) / (1 - rho) + ep .^ (2 - rho) / (2 - rho)))
 end
-function mae(m, x, y, w, offset)
-    sum(abs.(m(x) .+ offset .- y) .* w) / sum(w)
+function (l::Tweedie_Loss)(p::AbstractArray, y, w)
+    rho = eltype(p)(l.rho)
+    ep = exp.(p)
+    sum(w .* 2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* ep .^ (1 - rho) / (1 - rho) + ep .^ (2 - rho) / (2 - rho))) / sum(w)
 end
-
-function logloss(m, x, y)
-    p = m(x)
-    mean((1 .- y) .* p .- logσ.(p))
-end
-function logloss(m, x, y, w)
-    p = m(x)
-    sum(w .* ((1 .- y) .* p .- logσ.(p))) / sum(w)
-end
-function logloss(m, x, y, w, offset)
-    p = m(x) .+ offset
-    sum(w .* ((1 .- y) .* p .- logσ.(p))) / sum(w)
+function (l::Tweedie_Loss)(p::AbstractArray, y, w, offset)
+    rho = eltype(p)(l.rho)
+    ep = exp.(p .+ offset)
+    sum(w .* 2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* ep .^ (1 - rho) / (1 - rho) + ep .^ (2 - rho) / (2 - rho))) / sum(w)
 end
 
-function tweedie(m, x, y)
-    rho = eltype(x)(1.5)
-    p = exp.(m(x))
-    mean(2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* p .^ (1 - rho) / (1 - rho) +
-               p .^ (2 - rho) / (2 - rho))
-    )
+struct MLog_Loss <: Lux.AbstractLossFunction end
+function (::MLog_Loss)(p::AbstractArray, y)
+    y_oh = (UInt32(1):UInt32(size(p, 1))) .== reshape(y, 1, :)
+    Lux.CrossEntropyLoss(; logits=Val(true))(p, y_oh)
 end
-function tweedie(m, x, y, w)
-    rho = eltype(x)(1.5)
-    p = exp.(m(x))
-    sum(w .* 2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* p .^ (1 - rho) / (1 - rho) +
-                   p .^ (2 - rho) / (2 - rho))
-    ) / sum(w)
+function (::MLog_Loss)(p::AbstractArray, y, w)
+    y_oh = (UInt32(1):UInt32(size(p, 1))) .== reshape(y, 1, :)
+    per_sample = Lux.CrossEntropyLoss(; logits=Val(true), agg=identity)(p, y_oh)
+    sum(vec(per_sample) .* vec(w)) / sum(w)
 end
-function tweedie(m, x, y, w, offset)
-    rho = eltype(x)(1.5)
-    p = exp.(m(x) .+ offset)
-    sum(w .* 2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) - y .* p .^ (1 - rho) / (1 - rho) +
-                   p .^ (2 - rho) / (2 - rho))
-    ) / sum(w)
+function (::MLog_Loss)(p::AbstractArray, y, w, offset)
+    y_oh = (UInt32(1):UInt32(size(p, 1))) .== reshape(y, 1, :)
+    per_sample = Lux.CrossEntropyLoss(; logits=Val(true), agg=identity)(p .+ offset, y_oh)
+    sum(vec(per_sample) .* vec(w)) / sum(w)
 end
 
-function mlogloss(m, x, y)
-    p = logsoftmax(m(x); dims=1)
-    k = size(p, 1)
-    mean(-sum(onehotbatch(y, 1:k) .* p; dims=1))
+struct GaussianMLE_Loss <: Lux.AbstractLossFunction end
+function (::GaussianMLE_Loss)(p::AbstractArray, y)
+    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    mean(-(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))))
 end
-function mlogloss(m, x, y, w)
-    p = logsoftmax(m(x); dims=1)
-    k = size(p, 1)
-    sum(-sum(onehotbatch(y, 1:k) .* p; dims=1) .* w) / sum(w)
+function (::GaussianMLE_Loss)(p::AbstractArray, y, w)
+    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    sum(-(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* w) / sum(w)
 end
-function mlogloss(m, x, y, w, offset)
-    p = logsoftmax(m(x) .+ offset; dims=1)
-    k = size(p, 1)
-    sum(-sum(onehotbatch(y, 1:k) .* p; dims=1) .* w) / sum(w)
+function (::GaussianMLE_Loss)(p::AbstractArray, y, w, offset)
+    p_adj = p .+ offset
+    μ, σ, T = view(p_adj, 1, :), view(p_adj, 2, :), eltype(p_adj)
+    sum(-(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* w) / sum(w)
 end
-
-gaussian_mle_loss(μ::AbstractVector{T}, σ::AbstractVector{T}, y::AbstractVector{T}) where {T} =
-    -sum(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ))))
-gaussian_mle_loss(μ::AbstractVector{T}, σ::AbstractVector{T}, y::AbstractVector{T}, w::AbstractVector{T}) where {T} =
-    -sum((-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* w) / sum(w)
-
-function gaussian_mle(m, x, y)
-    p = m(x)
-    gaussian_mle_loss(view(p, 1, :), view(p, 2, :), y)
-end
-function gaussian_mle(m, x, y, w)
-    p = m(x)
-    gaussian_mle_loss(view(p, 1, :), view(p, 2, :), y, w)
-end
-function gaussian_mle(m, x, y, w, offset)
-    p = m(x) .+ offset
-    gaussian_mle_loss(view(p, 1, :), view(p, 2, :), y, w)
-end
-
-const _loss_fn_dict = Dict(
-    :mse => mse,
-    :mae => mae,
-    :logloss => logloss,
-    :mlogloss => mlogloss,
-    :gaussian_mle => gaussian_mle,
-    :tweedie => tweedie,
-)
-
-get_loss_fn(loss::Symbol) = _loss_fn_dict[loss]
 
 const _loss_type_dict = Dict(
     :mse => MSE,
     :mae => MAE,
     :logloss => LogLoss,
-    :tweedie => Tweedie,
+    :mlogloss => MLogLoss,
     :gaussian_mle => GaussianMLE,
-    :mlogloss => MLogLoss
+    :tweedie => Tweedie,
 )
 
 get_loss_type(loss::Symbol) = _loss_type_dict[loss]
+
+get_loss_fn(::Type{<:MSE}) = MSE_Loss()
+get_loss_fn(::Type{<:MAE}) = MAE_Loss()
+get_loss_fn(::Type{<:LogLoss}) = Log_Loss()
+get_loss_fn(::Type{<:MLogLoss}) = MLog_Loss()
+get_loss_fn(::Type{<:GaussianMLE}) = GaussianMLE_Loss()
+get_loss_fn(::Type{<:Tweedie}) = Tweedie_Loss()
+get_loss_fn(::Type{<:LossType}) = MSE_Loss() # fallback
+
+get_loss_fn(s::Symbol) = get_loss_fn(get_loss_type(s))
 
 end
