@@ -39,7 +39,7 @@ learner = NeuroTabRegressor(
     nrounds=10,
     lr=1e-2,
     batchsize=2048,
-    device=:cpu
+    device=:gpu
 )
 
 # Reactant GPU: 5.970480 seconds (2.33 M allocations: 5.242 GiB, 3.80% gc time, 0.00% compilation time)
@@ -48,12 +48,13 @@ learner = NeuroTabRegressor(
 @time m = NeuroTabModels.fit(
     learner,
     dtrain;
-    deval=dtrain, # FIXME: very slow when deval is used, need to adapt infer
+    # deval=dtrain, # FIXME: very slow when deval is used / crashed on GPU
     target_name,
     feature_names,
     print_every_n=2,
 );
 
-# desktop: 0.771839 seconds (369.20 k allocations: 1.522 GiB, 5.94% gc time)
-# FIXME: need to adapt infer: return only full batches
+# Reactant CPU: 0.952495 seconds (57.96 k allocations: 1.517 GiB, 0.23% gc time, 0.00% compilation time)
+# Reactant CPU: 10.326071 seconds (29.30 k allocations: 13.145 GiB, 1.97% gc time)
+# FIXME: need to adapt infer: returns only full batches: length of p_train must be == nrow(dtrain)
 @time p_train = m(dtrain; device=:gpu);
