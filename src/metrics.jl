@@ -144,19 +144,15 @@ function gaussian_mle(m, x, y, w, offset; agg=mean)
     return agg(gaussian_loss_elt.(μ, σ, vec(y)) .* vec(w))
 end
 
-function get_metric(ts::Training.TrainState, f::Function, data, model_compiled)
+function get_metric(ts::Training.TrainState, data, eval_compiled)
     ps, st = ts.parameters, Lux.testmode(ts.states)
-    m = x -> first(model_compiled(x, ps, st))
 
     metric = 0.0f0
     ws = 0.0f0
     for d in data
-        metric += f(m, d...; agg=sum)
-        if length(d) >= 3
-            ws += sum(d[3])
-        else
-            ws += size(d[2], ndims(d[2]))
-        end
+        m_val, w_val = eval_compiled(d..., ps, st)
+        metric += Float32(m_val)
+        ws += Float32(w_val)
     end
     return metric / ws
 end
