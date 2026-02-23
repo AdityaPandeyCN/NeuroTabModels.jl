@@ -38,7 +38,6 @@ function mae(m, x, y, w, offset; agg=mean)
     return agg(abs.(vec(m(x)) .+ vec(offset) .- vec(y)) .* vec(w))
 end
 
-
 """
     logloss(m, x, y; agg=mean)
     logloss(m, x, y, w; agg=mean)
@@ -59,7 +58,6 @@ function logloss(m, x, y, w, offset; agg=mean)
     y = vec(y)
     return agg(((1 .- y) .* p .- logsigmoid.(p)) .* vec(w))
 end
-
 
 """
     tweedie(m, x, y; agg=mean)
@@ -96,9 +94,9 @@ end
     mlogloss(m, x, y, w, offset; agg=mean)
 """
 function mlogloss(m, x, y; agg=mean)
-    p = m(x)                                                 # (k, batch)
+    p = m(x)
     k = size(p, 1)
-    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)       # (k, batch)
+    y_oh = (UInt32(1):UInt32(k)) .== reshape(y, 1, :)
     lsm = logsoftmax(p; dims=1)
     return agg(vec(-sum(y_oh .* lsm; dims=1)))
 end
@@ -117,10 +115,6 @@ function mlogloss(m, x, y, w, offset; agg=mean)
     return agg(vec(-sum(y_oh .* lsm; dims=1)) .* vec(w))
 end
 
-
-gaussian_loss_elt(μ, σ, y) = -σ - (y - μ)^2 / (2 * max(2.0f-7, exp(2 * σ)))
-
-
 """
     gaussian_mle(m, x, y; agg=mean)
     gaussian_mle(m, x, y, w; agg=mean)
@@ -128,21 +122,18 @@ gaussian_loss_elt(μ, σ, y) = -σ - (y - μ)^2 / (2 * max(2.0f-7, exp(2 * σ)))
 """
 function gaussian_mle(m, x, y; agg=mean)
     p = m(x)
-    μ = view(p, :, 1)
-    σ = view(p, :, 2)
-    return agg(gaussian_loss_elt.(μ, σ, vec(y)))
+    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    return agg(-(-σ .- (vec(y) .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))))
 end
 function gaussian_mle(m, x, y, w; agg=mean)
     p = m(x)
-    μ = view(p, :, 1)
-    σ = view(p, :, 2)
-    return agg(gaussian_loss_elt.(μ, σ, vec(y)) .* vec(w))
+    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    return agg(-(-σ .- (vec(y) .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* vec(w))
 end
 function gaussian_mle(m, x, y, w, offset; agg=mean)
     p = m(x) .+ offset
-    μ = view(p, :, 1)
-    σ = view(p, :, 2)
-    return agg(gaussian_loss_elt.(μ, σ, vec(y)) .* vec(w))
+    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    return agg(-(-σ .- (vec(y) .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* vec(w))
 end
 
 function get_metric(ts::Training.TrainState, data, eval_compiled)
@@ -159,7 +150,7 @@ function get_metric(ts::Training.TrainState, data, eval_compiled)
     end
 
     to_cpu(x) = x isa Reactant.ConcretePJRTNumber || x isa Reactant.ConcretePJRTArray ? first(Array(x)) : x
-    return Float32(to_cpu(metric_accum)) / Float32(to_cpu(ws_accum))
+    return Float64(to_cpu(metric_accum)) / Float64(to_cpu(ws_accum))
 end
 
 const metric_dict = Dict(
