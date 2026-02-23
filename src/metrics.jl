@@ -158,9 +158,11 @@ function get_metric(ts::Training.TrainState, data, eval_compiled)
         ws_accum = ws_accum .+ w_val
     end
 
-    to_cpu(x) = x isa Reactant.ConcretePJRTNumber || x isa Reactant.ConcretePJRTArray ? first(Array(x)) : x
-    return Float32(to_cpu(metric_accum)) / Float32(to_cpu(ws_accum))
+    _to_f64(x) = x isa Reactant.ConcretePJRTNumber ? Float64(x) :
+                 x isa Reactant.ConcretePJRTArray ? Float64(first(Array(x))) : Float64(x)
+    return _to_f64(metric_accum) / _to_f64(ws_accum)
 end
+
 
 const metric_dict = Dict(
     :mse => mse,
