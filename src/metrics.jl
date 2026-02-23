@@ -163,7 +163,6 @@ function get_metric(ts::Training.TrainState, data, eval_compiled)
     return _to_f64(metric_accum) / _to_f64(ws_accum)
 end
 
-
 const metric_dict = Dict(
     :mse => mse,
     :mae => mae,
