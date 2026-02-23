@@ -122,18 +122,21 @@ end
 """
 function gaussian_mle(m, x, y; agg=mean)
     p = m(x)
-    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
-    return agg(-(-σ .- (vec(y) .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))))
+    μ, raw_σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    σ = softplus.(raw_σ) .+ T(1e-4)
+    return agg(log.(σ) .+ (vec(y) .- μ) .^ 2 ./ (2 .* σ .^ 2))
 end
 function gaussian_mle(m, x, y, w; agg=mean)
     p = m(x)
-    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
-    return agg(-(-σ .- (vec(y) .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* vec(w))
+    μ, raw_σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    σ = softplus.(raw_σ) .+ T(1e-4)
+    return agg((log.(σ) .+ (vec(y) .- μ) .^ 2 ./ (2 .* σ .^ 2)) .* vec(w))
 end
 function gaussian_mle(m, x, y, w, offset; agg=mean)
     p = m(x) .+ offset
-    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
-    return agg(-(-σ .- (vec(y) .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* vec(w))
+    μ, raw_σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    σ = softplus.(raw_σ) .+ T(1e-4)
+    return agg((log.(σ) .+ (vec(y) .- μ) .^ 2 ./ (2 .* σ .^ 2)) .* vec(w))
 end
 
 function get_metric(ts::Training.TrainState, data, eval_compiled)
@@ -149,8 +152,9 @@ function get_metric(ts::Training.TrainState, data, eval_compiled)
         ws_accum = ws_accum .+ w_val
     end
 
-    to_cpu(x) = x isa Reactant.ConcretePJRTNumber || x isa Reactant.ConcretePJRTArray ? first(Array(x)) : x
-    return Float64(to_cpu(metric_accum)) / Float64(to_cpu(ws_accum))
+    _to_f64(x) = x isa Reactant.ConcretePJRTNumber ? Float64(x) :
+                 x isa Reactant.ConcretePJRTArray ? Float64(first(Array(x))) : Float64(x)
+    return _to_f64(metric_accum) / _to_f64(ws_accum)
 end
 
 const metric_dict = Dict(

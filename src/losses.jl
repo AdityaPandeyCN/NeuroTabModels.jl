@@ -4,7 +4,7 @@ export get_loss_fn, get_loss_type
 export LossType, MSE, MAE, LogLoss, MLogLoss, GaussianMLE, Tweedie
 
 import Statistics: mean
-import NNlib: logsigmoid
+import NNlib: logsigmoid,softplus
 using Lux
 
 abstract type LossType end
@@ -71,17 +71,20 @@ end
 
 struct GaussianMLE_Loss <: Lux.AbstractLossFunction end
 function (::GaussianMLE_Loss)(p::AbstractArray, y)
-    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
-    mean(-(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))))
+    μ, raw_σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    σ = softplus.(raw_σ) .+ T(1e-4)
+    mean(log.(σ) .+ (y .- μ) .^ 2 ./ (2 .* σ .^ 2))
 end
 function (::GaussianMLE_Loss)(p::AbstractArray, y, w)
-    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
-    sum(-(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* w) / sum(w)
+    μ, raw_σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    σ = softplus.(raw_σ) .+ T(1e-4)
+    sum((log.(σ) .+ (y .- μ) .^ 2 ./ (2 .* σ .^ 2)) .* w) / sum(w)
 end
 function (::GaussianMLE_Loss)(p::AbstractArray, y, w, offset)
     p_adj = p .+ offset
-    μ, σ, T = view(p_adj, 1, :), view(p_adj, 2, :), eltype(p_adj)
-    sum(-(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* w) / sum(w)
+    μ, raw_σ, T = view(p_adj, 1, :), view(p_adj, 2, :), eltype(p_adj)
+    σ = softplus.(raw_σ) .+ T(1e-4)
+    sum((log.(σ) .+ (y .- μ) .^ 2 ./ (2 .* σ .^ 2)) .* w) / sum(w)
 end
 
 const _loss_type_dict = Dict(

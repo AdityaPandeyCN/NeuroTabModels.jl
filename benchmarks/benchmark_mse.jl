@@ -18,14 +18,15 @@ target_name = "y"
 
 arch = NeuroTabModels.NeuroTreeConfig(;
     tree_type=:binary,
-    proj_size=2,
+    proj_size=1,
     actA=:identity,
     init_scale=1.0,
     depth=4,
     ntrees=32,
-    stack_size=1,
+    stack_size=2,
     hidden_size=64,
     scaler=false,
+    MLE_tree_split=false,
 )
 # arch = NeuroTabModels.MLPConfig(;
 #     act=:relu,
@@ -59,4 +60,3 @@ learner = NeuroTabRegressor(
 # FIXME: need to adapt infer: returns only full batches: length of p_train must be == nrow(dtrain)
 @time p_train = m(dtrain; device=:cpu);
 @assert length(p_train) == nrow(dtrain) "pred=$(length(p_train)) != nrow=$(nrow(dtrain))"
-
