@@ -36,7 +36,7 @@ arch = NeuroTabModels.NeuroTreeConfig(;
 
 learner = NeuroTabRegressor(
     arch;
-    loss=:gaussian_mle,
+    loss=:mse,
     nrounds=50,
     lr=1e-2,
     batchsize=2048,

@@ -3,7 +3,7 @@ module Metrics
 export metric_dict, is_maximise, get_metric
 
 import Statistics: mean, std
-import NNlib: logsigmoid, logsoftmax, softmax, relu, hardsigmoid
+import NNlib: logsigmoid, logsoftmax, softmax, relu, hardsigmoid, softplus
 using Lux
 using Lux: Training
 using Reactant
