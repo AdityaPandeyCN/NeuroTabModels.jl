@@ -34,10 +34,10 @@ arch = NeuroTabModels.NeuroTreeConfig(;
 learner = NeuroTabRegressor(
     arch;
     loss=:gaussian_mle,
-    nrounds=200,
+    nrounds=50,
     lr=1e-2,
     batchsize=2048,
-    device=:gpu
+    device=:cpu
 )
 
 @time m = NeuroTabModels.fit(

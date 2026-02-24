@@ -73,18 +73,27 @@ _softplus(x) = log(one(x) + exp(x))
 
 struct GaussianMLE_Loss <: Lux.AbstractLossFunction end
 function (::GaussianMLE_Loss)(p::AbstractArray, y)
-    μ, raw_σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    μ = view(p, 1, :)
+    raw_σ = view(p, 2, :)
+    y = vec(y)
+    T = eltype(p)
     σ = _softplus.(raw_σ) .+ T(1e-4)
     mean(log.(σ) .+ (y .- μ) .^ 2 ./ (2 .* σ .^ 2))
 end
 function (::GaussianMLE_Loss)(p::AbstractArray, y, w)
-    μ, raw_σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
+    μ = view(p, 1, :)
+    raw_σ = view(p, 2, :)
+    y = vec(y)
+    T = eltype(p)
     σ = _softplus.(raw_σ) .+ T(1e-4)
     sum((log.(σ) .+ (y .- μ) .^ 2 ./ (2 .* σ .^ 2)) .* w) / sum(w)
 end
 function (::GaussianMLE_Loss)(p::AbstractArray, y, w, offset)
     p_adj = p .+ offset
-    μ, raw_σ, T = view(p_adj, 1, :), view(p_adj, 2, :), eltype(p_adj)
+    μ = view(p_adj, 1, :)
+    raw_σ = view(p_adj, 2, :)
+    y = vec(y)
+    T = eltype(p_adj)
     σ = _softplus.(raw_σ) .+ T(1e-4)
     sum((log.(σ) .+ (y .- μ) .^ 2 ./ (2 .* σ .^ 2)) .* w) / sum(w)
 end

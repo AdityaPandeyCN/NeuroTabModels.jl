@@ -172,7 +172,7 @@ is_maximise(::typeof(mse)) = false
 is_maximise(::typeof(mae)) = false
 is_maximise(::typeof(logloss)) = false
 is_maximise(::typeof(mlogloss)) = false
-is_maximise(::typeof(gaussian_mle)) = true
+is_maximise(::typeof(gaussian_mle)) = false
 is_maximise(::typeof(tweedie)) = false
 
 end
