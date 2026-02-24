@@ -1,66 +1,122 @@
-using NeuroTabModels
-using DataFrames
-using Random
-using Statistics: mean, std
+using NNlib: softplus
+using Statistics: mean
+using Reactant
+using Enzyme
 
-# 1. Setup & Data Generation
-Random.seed!(42)
-nobs = 10_000
-num_feat = 10
+p = Float32[0.0 0.0 0.0;
+            0.0 0.0 0.0]
+y = Float32[1.0, -1.0, 0.5]
 
-@info "Generating data..."
-X = rand(Float32, nobs, num_feat)
-Y_raw = Float32.(X * randn(Float32, num_feat) .+ 0.1f0 * randn(Float32, nobs))
+# ── Original formulation components ──
 
-# 2. MANDATORY DATA FIX: Standardize Y to prevent variance explosion
-Y_mean, Y_std = mean(Y_raw), std(Y_raw)
-Y = Float32.((Y_raw .- Y_mean) ./ Y_std)
+# Test 1: exp(2σ)
+function loss_exp2sigma(p, y)
+    σ = view(p, 2, :)
+    mean(exp.(2 .* σ))
+end
 
-dtrain = DataFrame(X, :auto)
-feature_names = names(dtrain)
-dtrain.y = Y
-target_name = "y"
+# Test 2: max(eps, exp(2σ))
+function loss_max_exp(p, y)
+    σ = view(p, 2, :)
+    T = eltype(p)
+    mean(max.(T(2e-7), exp.(2 .* σ)))
+end
 
-# 3. Configure Architecture
-# MLE_tree_split=true is required so the network forks into a μ-tree and a σ-tree
-arch = NeuroTabModels.NeuroTreeConfig(;
-    tree_type=:binary,
-    proj_size=1,
-    actA=:identity,
-    init_scale=0.1,
-    depth=4,
-    ntrees=32,
-    stack_size=2,
-    hidden_size=64,
-    scaler=false,
-    MLE_tree_split=true,
-)
+# Test 3: (y - μ)² / (2 * max(eps, exp(2σ)))
+function loss_ratio(p, y)
+    μ = view(p, 1, :)
+    σ = view(p, 2, :)
+    T = eltype(p)
+    mean((y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ))))
+end
 
-learner = NeuroTabRegressor(
-    arch;
-    loss=:gaussian_mle,
-    nrounds=200,
-    lr=1e-3,
-    batchsize=2048,
-    device=:cpu
-)
+# Test 4: -σ (just the log-det term)
+function loss_neg_sigma(p, y)
+    σ = view(p, 2, :)
+    mean(-σ)
+end
 
-# 5. Train
-@info "Starting training..."
-m = NeuroTabModels.fit(
-    learner,
-    dtrain;
-    deval=dtrain,
-    target_name=target_name,
-    feature_names=feature_names,
-    print_every_n=2
-)
+# Test 5: -σ - (y-μ)²/(2*exp(2σ)) — the log-likelihood
+function loss_loglik(p, y)
+    μ = view(p, 1, :)
+    σ = view(p, 2, :)
+    T = eltype(p)
+    mean(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ))))
+end
 
-# 6. Verify Inference
-@info "Testing inference..."
-preds = m(dtrain; device=:cpu)
+# Test 6: negated log-likelihood — the actual original loss
+function loss_original(p, y)
+    μ = view(p, 1, :)
+    σ = view(p, 2, :)
+    T = eltype(p)
+    mean(-(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))))
+end
 
-println("\nSuccess! Loss is dropping.")
-println("Shape of predictions: ", size(preds))
-println("First 3 predictions:")
-display(preds[1:2, 1:3]) # Adjust this display if your matrix is transposed
+# Test 7: manual softplus full MLE (our fix)
+_softplus(x) = log(one(x) + exp(x))
+function loss_fixed(p, y)
+    μ = view(p, 1, :)
+    raw_σ = view(p, 2, :)
+    T = eltype(p)
+    σ = _softplus.(raw_σ) .+ T(1e-4)
+    mean(log.(σ) .+ (y .- μ) .^ 2 ./ (2 .* σ .^ 2))
+end
+
+# ── Gradient helpers ──
+
+function cpu_grad(loss_fn, p, y)
+    dp = zero(p)
+    Enzyme.autodiff(Reverse, loss_fn, Active, Duplicated(p, dp), Const(y))
+    return dp
+end
+
+function reactant_grad(loss_fn, p, y)
+    function _grad(p, y)
+        dp = zero(p)
+        Enzyme.autodiff(Reverse, loss_fn, Active, Duplicated(p, dp), Const(y))
+        return dp
+    end
+    local p_r = Reactant.to_rarray(copy(p))
+    local y_r = Reactant.to_rarray(copy(y))
+    compiled = @compile _grad(p_r, y_r)
+    return Array(compiled(Reactant.to_rarray(copy(p)), Reactant.to_rarray(copy(y))))
+end
+
+# ── Run tests ──
+
+tests = [
+    ("1: exp(2σ)",                    loss_exp2sigma),
+    ("2: max(eps, exp(2σ))",          loss_max_exp),
+    ("3: (y-μ)²/(2*max(eps,exp(2σ)))", loss_ratio),
+    ("4: -σ (neg sigma)",             loss_neg_sigma),
+    ("5: log-likelihood",             loss_loglik),
+    ("6: ORIGINAL loss (neg loglik)", loss_original),
+    ("7: FIXED (manual softplus)",    loss_fixed),
+]
+
+for (name, fn) in tests
+    println("="^60)
+    println("TEST $name")
+    println("="^60)
+
+    g_cpu = cpu_grad(fn, copy(p), y)
+    g_xla = reactant_grad(fn, p, y)
+
+    println("  CPU μ grads: $(g_cpu[1, :])")
+    println("  XLA μ grads: $(g_xla[1, :])")
+    println("  CPU σ grads: $(g_cpu[2, :])")
+    println("  XLA σ grads: $(g_xla[2, :])")
+
+    sign_match_1 = all(sign.(g_cpu[1, :]) .== sign.(g_xla[1, :]))
+    sign_match_2 = all(sign.(g_cpu[2, :]) .== sign.(g_xla[2, :]))
+    values_match = isapprox(g_cpu, g_xla; atol=1e-5)
+
+    if values_match
+        println("  ✓ PERFECT MATCH")
+    else
+        match_str(x) = x ? "✓ OK" : "✗ SIGN FLIP"
+        println("  Row 1 (μ): $(match_str(sign_match_1))")
+        println("  Row 2 (σ): $(match_str(sign_match_2))")
+    end
+    println()
+end

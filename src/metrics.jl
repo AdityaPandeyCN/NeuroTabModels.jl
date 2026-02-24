@@ -120,22 +120,24 @@ end
     gaussian_mle(m, x, y, w; agg=mean)
     gaussian_mle(m, x, y, w, offset; agg=mean)
 """
+_softplus(x) = log(one(x) + exp(x))
+
 function gaussian_mle(m, x, y; agg=mean)
     p = m(x)
     μ, raw_σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
-    σ = softplus.(raw_σ) .+ T(1e-4)
+    σ = _softplus.(raw_σ) .+ T(1e-4)
     return agg(log.(σ) .+ (vec(y) .- μ) .^ 2 ./ (2 .* σ .^ 2))
 end
 function gaussian_mle(m, x, y, w; agg=mean)
     p = m(x)
     μ, raw_σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
-    σ = softplus.(raw_σ) .+ T(1e-4)
+    σ = _softplus.(raw_σ) .+ T(1e-4)
     return agg((log.(σ) .+ (vec(y) .- μ) .^ 2 ./ (2 .* σ .^ 2)) .* vec(w))
 end
 function gaussian_mle(m, x, y, w, offset; agg=mean)
     p = m(x) .+ offset
     μ, raw_σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
-    σ = softplus.(raw_σ) .+ T(1e-4)
+    σ = _softplus.(raw_σ) .+ T(1e-4)
     return agg((log.(σ) .+ (vec(y) .- μ) .^ 2 ./ (2 .* σ .^ 2)) .* vec(w))
 end
 
