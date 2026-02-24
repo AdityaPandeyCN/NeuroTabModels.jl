@@ -35,9 +35,9 @@ learner = NeuroTabRegressor(
     arch;
     loss=:gaussian_mle,
     nrounds=50,
-    lr=1e-2,
+    lr=5e-4,
     batchsize=2048,
-    device=:cpu
+    device=:gpu
 )
 
 @time m = NeuroTabModels.fit(
@@ -46,7 +46,7 @@ learner = NeuroTabRegressor(
     deval=dtrain,
     target_name,
     feature_names,
-    print_every_n=10,
+    print_every_n=1,
 );
 
 @time p_train = m(dtrain[1:10, :]; device=:cpu);
