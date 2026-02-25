@@ -1,73 +1,138 @@
-include("leaf_weights.jl")
-
-struct NeuroTree{W,B,P,F<:Function}
-    w::W
-    s::B
-    b::B
-    p::P
+struct NeuroTree{M,V,F}
+    w::M
+    b::V
+    s::V
+    p::M
+    ml::M
+    ms::M
     actA::F
     scaler::Bool
+    ntrees::Int
 end
-@layer NeuroTree
+@layer NeuroTree trainable = (w, b, s, p)
 
-function node_weights(m::NeuroTree, x)
-    # [N X T, F] * [F, B] => [N x T, B]
+function (m::NeuroTree)(x)
     if m.scaler
-        nw = Flux.sigmoid_fast.(Flux.softplus.(m.s) .* (m.actA(m.w) * x .+ m.b))
+        nw = softplus(m.s) .* (m.actA(m.w) * x .+ m.b) # [F,B] => [NT,B]
     else
-        nw = Flux.sigmoid_fast.(m.actA(m.w) * x .+ m.b)
+        nw = (m.actA(m.w) * x .+ m.b) # [F,B] => [NT,B]
     end
-    # [N x T, B] -> [N, T, B]
-    return reshape(nw, :, size(m.p, 3), size(x, 2))
+    nw = reshape(nw, size(m.ml, 2), :) # [NT,B] => [N,TB]
+    lw = exp.(m.ml * nw .- m.ms * softplus.(nw)) # [N,TB] => [L,TB]
+    lw = reshape(lw, :, size(x, 2)) # [L,TB] => [LT,B]
+    p = m.p * lw ./ m.ntrees # [P,LT] * [LT,B] => [P,B]
+    return p
 end
-
-function (m::NeuroTree{W,B,P,F})(x::W) where {W,B,P,F}
-    # [F, B] -> [N, T, B]
-    nw = node_weights(m, x)
-    # [N, T, B] -> [L, T, B]
-    (_, lw) = leaf_weights!(nw)
-    # [L, T, B], [P, L, T] -> [P, B]
-    pred = dot_prod_agg(lw, m.p) ./ size(m.p, 3)
-    return pred
-end
-
-dot_prod_agg(lw, p) = dropdims(sum(reshape(lw, 1, size(lw)...) .* p, dims=(2, 3)), dims=(2, 3))
 
 """
-    NeuroTree(; ins, outs, depth=4, ntrees=64, actA=identity, scaler=true, init_scale=1e-1)
-    NeuroTree((ins, outs)::Pair{<:Integer,<:Integer}; depth=4, ntrees=64, actA=identity, scaler=true, init_scale=1e-1)
+    NeuroTree(; ins, outs, , tree_type=:binary, depth=4, ntrees=64, proj_size=1, actA=identity, scaler=true, init_scale=1e-1)
+    NeuroTree((ins, outs)::Pair{<:Integer,<:Integer}; tree_type=:binary, depth=4, ntrees=64, proj_size=1, actA=identity, scaler=true, init_scale=1e-1)
 
 Initialization of a NeuroTree.
 """
-function NeuroTree(; ins, outs, depth=4, ntrees=64, actA=identity, scaler=true, init_scale=1e-1)
-    nnodes = 2^depth - 1
-    nleaves = 2^depth
-    nt = NeuroTree(
+function NeuroTree(; ins, outs, tree_type=:binary, depth=4, ntrees=64, proj_size=1, actA=identity, scaler=true, init_scale=1e-1)
+    ml = get_logits_mask(Val(tree_type), depth)
+    ms = get_softplus_mask(Val(tree_type), depth)
+    nleaves = size(ml, 1)
+    nnodes = size(ml, 2)
+
+    op = NeuroTree(
         Float32.((rand(nnodes * ntrees, ins) .- 0.5) ./ 4), # w
+        zeros(Float32, nnodes * ntrees), # b
         Float32.(fill(log(exp(1) - 1), nnodes * ntrees)), # s
-        Float32.((rand(nnodes * ntrees) .- 0.5) ./ 4), # b
-        Float32.(randn(outs, nleaves, ntrees) .* init_scale), # p
+        Float32.(randn(outs, nleaves * ntrees) .* init_scale), # p
+        Float32.(ml),
+        Float32.(ms),
         actA,
-        scaler
+        scaler,
+        ntrees,
     )
-    return nt
+    return op
 end
-function NeuroTree((ins, outs)::Pair{<:Integer,<:Integer}; depth=4, ntrees=64, actA=identity, scaler=true, init_scale=1e-1)
-    nnodes = 2^depth - 1
-    nleaves = 2^depth
-    nt = NeuroTree(
+function NeuroTree((ins, outs)::Pair{<:Integer,<:Integer}; tree_type=:binary, depth=4, ntrees=64, proj_size=1, actA=identity, scaler=true, init_scale=1e-1)
+    ml = get_logits_mask(Val(tree_type), depth)
+    ms = get_softplus_mask(Val(tree_type), depth)
+    nleaves = size(ml, 1)
+    nnodes = size(ml, 2)
+
+    op = NeuroTree(
         Float32.((rand(nnodes * ntrees, ins) .- 0.5) ./ 4), # w
-        Float32.(fill(log(exp(1) - 1), nnodes * ntrees)), # s
         Float32.((rand(nnodes * ntrees) .- 0.5) ./ 4), # b
-        Float32.(randn(outs, nleaves, ntrees) .* init_scale), # p
+        Float32.(fill(log(exp(1) - 1), nnodes * ntrees)), # s
+        Float32.(randn(outs, nleaves * ntrees) .* init_scale), # p
+        Float32.(ml),
+        Float32.(ms),
         actA,
-        scaler
+        scaler,
+        ntrees,
     )
-    return nt
+    return op
+end
+
+
+"""
+    get_logits_mask(::Val{:binary}, depth::Integer)
+    get_logits_mask(::Val{:oblivious}, depth::Integer)
+
+Returns a masking matrix for logits for tree leaves probabilities.
+"""
+function get_logits_mask(::Val{:binary}, depth::Integer)
+    nodes = 2^depth - 1
+    leaves = 2^depth
+    mask = zeros(Bool, leaves, nodes)
+    for d in 1:depth
+        blocks = 2^(d - 1)
+        k = 2^(depth - d)
+        stride = 2 * k
+        for b in 1:blocks
+            view(mask, (b-1)*stride+1:(b-1)*stride+k, 2^(d - 1) + b - 1) .= 1
+        end
+    end
+    return mask
+end
+function get_logits_mask(::Val{:oblivious}, depth::Integer)
+    leaves = 2^depth
+    mask = zeros(Bool, leaves, depth)
+    for d in 1:depth
+        blocks = 2^(d - 1)
+        k = 2^(depth - d)
+        stride = 2 * k
+        for b in 1:blocks
+            view(mask, (b-1)*stride+1:(b-1)*stride+k, d) .= 1
+        end
+    end
+    return mask
+end
+
+"""
+    get_softplus_mask(::Val{:binary}, depth::Integer)
+    get_softplus_mask(::Val{:oblivious}, depth::Integer)
+
+Returns a masking matrix for softplus terms for tree leaves probabilities.
+"""
+function get_softplus_mask(::Val{:binary}, depth::Integer)
+    nodes = 2^depth - 1
+    leaves = 2^depth
+    mask = zeros(Bool, leaves, nodes)
+    for d in 1:depth
+        blocks = 2^(d - 1)
+        k = 2^(depth - d + 1)
+        stride = k
+        for b in 1:blocks
+            view(mask, (b-1)*stride+1:(b-1)*stride+k, 2^(d - 1) + b - 1) .= 1
+        end
+    end
+    return mask
+end
+function get_softplus_mask(::Val{:oblivious}, depth::Integer)
+    leaves = 2^depth
+    mask = ones(Bool, leaves, depth)
+    return mask
 end
 
 """
     StackTree
+
 A StackTree is made of a collection of NeuroTree.
 """
 struct StackTree
@@ -75,23 +140,23 @@ struct StackTree
 end
 @layer StackTree
 
-function StackTree((ins, outs)::Pair{<:Integer,<:Integer}; depth=4, ntrees=64, stack_size=2, hidden_size=8, actA=identity, scaler=true, init_scale=1e-1)
+function StackTree((ins, outs)::Pair{<:Integer,<:Integer}; tree_type=:binary, depth=4, ntrees=64, proj_size=1, stack_size=1, hidden_size=8, actA=identity, scaler=true, init_scale=1e-1)
     @assert stack_size == 1 || hidden_size >= outs
     trees = []
     for i in 1:stack_size
         if i == 1
             if i < stack_size
-                tree = NeuroTree(ins => hidden_size; depth, ntrees, actA, scaler, init_scale)
+                tree = NeuroTree(ins => hidden_size; tree_type, depth, ntrees, proj_size, actA, scaler, init_scale)
                 push!(trees, tree)
             else
-                tree = NeuroTree(ins => outs; depth, ntrees, actA, scaler, init_scale)
+                tree = NeuroTree(ins => outs; tree_type, depth, ntrees, proj_size, actA, scaler, init_scale)
                 push!(trees, tree)
             end
         elseif i < stack_size
-            tree = NeuroTree(hidden_size => hidden_size; depth, ntrees, actA, scaler, init_scale)
+            tree = NeuroTree(hidden_size => hidden_size; tree_type, depth, ntrees, proj_size, actA, scaler, init_scale)
             push!(trees, tree)
         else
-            tree = NeuroTree(hidden_size => outs; depth, ntrees, actA, scaler, init_scale)
+            tree = NeuroTree(hidden_size => outs; tree_type, depth, ntrees, proj_size, actA, scaler, init_scale)
             push!(trees, tree)
         end
     end
@@ -111,31 +176,3 @@ function (m::StackTree)(x::AbstractMatrix)
     end
     return p
 end
-
-
-function _identity_act(x)
-    return x ./ sum(abs.(x), dims=2)
-end
-function _tanh_act(x)
-    x = Flux.tanh_fast.(x)
-    return x ./ sum(abs.(x), dims=2)
-end
-function _hardtanh_act(x)
-    x = Flux.hardtanh.(x)
-    return x ./ sum(abs.(x), dims=2)
-end
-
-"""
-    act_dict = Dict(
-        :identity => _identity_act,
-        :tanh => _tanh_act,
-        :hardtanh => _hardtanh_act,
-    )
-
-Dictionary mapping features activation name to their function.
-"""
-const act_dict = Dict(
-    :identity => _identity_act,
-    :tanh => _tanh_act,
-    :hardtanh => _hardtanh_act,
-)

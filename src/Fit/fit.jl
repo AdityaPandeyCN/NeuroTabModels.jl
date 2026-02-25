@@ -138,10 +138,16 @@ function fit(
         (verbosity > 0) && @info "Init training"
     end
 
+    GC.gc(true)
+    if typeof(cache[:dtrain]) <: CUDA.CuIterator
+        CUDA.reclaim()
+    end
     # for iter = 1:config.nrounds
+    loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
     while m.info[:nrounds] < config.nrounds
         fit_iter!(m, cache)
         iter = m.info[:nrounds]
+
         if !isnothing(logger)
             cb(logger, iter, m)
             if verbosity > 0 && iter % print_every_n == 0
@@ -152,16 +158,11 @@ function fit(
     end
 
     m.info[:logger] = logger
-    return m
-    # return m |> cpu
+    return m |> cpu
 end
 
 function fit_iter!(m, cache)
     loss, opts, data = cache[:loss], cache[:opts], cache[:dtrain]
-    GC.gc(true)
-    if typeof(cache[:dtrain]) <: CUDA.CuIterator
-        CUDA.reclaim()
-    end
     for d in data
         grads = gradient(model -> loss(model, d...), m)[1]
         Optimisers.update!(opts, m, grads)

@@ -7,11 +7,8 @@ using CUDA
 
 import Flux
 import Flux: @layer, trainmode!, gradient, Chain, DataLoader, cpu, gpu
-import Flux: logσ, logsoftmax, softmax, softmax!, sigmoid, sigmoid_fast, hardsigmoid, tanh, tanh_fast, hardtanh, softplus, onecold, onehotbatch
+import Flux: relu, logsoftmax, softmax, softmax!, sigmoid, sigmoid_fast, hardsigmoid, tanh, tanh_fast, hardtanh, softplus, onecold, onehotbatch, glorot_uniform
 import Flux: BatchNorm, Dense, Dropout, MultiHeadAttention, Parallel
-
-using ChainRulesCore
-import ChainRulesCore: rrule
 
 import ..Losses: get_loss_type, GaussianMLE
 import ..Models: Architecture
@@ -19,9 +16,11 @@ import ..Models: Architecture
 include("model.jl")
 
 struct NeuroTreeConfig <: Architecture
+    tree_type::Symbol
     actA::Symbol
     depth::Int
     ntrees::Int
+    proj_size::Int
     hidden_size::Int
     stack_size::Int
     scaler::Bool
@@ -33,9 +32,11 @@ function NeuroTreeConfig(; kwargs...)
 
     # defaults arguments
     args = Dict{Symbol,Any}(
-        :actA => :tanh,
+        :tree_type => :binary,
+        :actA => :identity,
         :depth => 4,
-        :ntrees => 64,
+        :ntrees => 32,
+        :proj_size => 1,
         :hidden_size => 1,
         :stack_size => 1,
         :scaler => true,
@@ -59,9 +60,11 @@ function NeuroTreeConfig(; kwargs...)
     end
 
     config = NeuroTreeConfig(
+        Symbol(args[:tree_type]),
         Symbol(args[:actA]),
         args[:depth],
         args[:ntrees],
+        args[:proj_size],
         args[:hidden_size],
         args[:stack_size],
         args[:scaler],
@@ -81,16 +84,20 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
             Parallel(
                 vcat,
                 StackTree(nfeats => outsize;
+                    tree_type=config.tree_type,
                     depth=config.depth,
                     ntrees=config.ntrees,
+                    proj_size=config.proj_size,
                     stack_size=config.stack_size,
                     hidden_size=config.hidden_size,
                     actA=act_dict[config.actA],
                     scaler=config.scaler,
                     init_scale=config.init_scale),
                 StackTree(nfeats => outsize;
+                    tree_type=config.tree_type,
                     depth=config.depth,
                     ntrees=config.ntrees,
+                    proj_size=config.proj_size,
                     stack_size=config.stack_size,
                     hidden_size=config.hidden_size,
                     actA=act_dict[config.actA],
@@ -102,8 +109,10 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
         chain = Chain(
             BatchNorm(nfeats),
             StackTree(nfeats => outsize;
+                tree_type=config.tree_type,
                 depth=config.depth,
                 ntrees=config.ntrees,
+                proj_size=config.proj_size,
                 stack_size=config.stack_size,
                 hidden_size=config.hidden_size,
                 actA=act_dict[config.actA],
@@ -114,5 +123,32 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
     end
 end
 
+
+function _identity_act(x)
+    return x ./ sum(abs.(x), dims=2)
+end
+function _tanh_act(x)
+    x = Flux.tanh_fast.(x)
+    return x ./ sum(abs.(x), dims=2)
+end
+function _hardtanh_act(x)
+    x = Flux.hardtanh.(x)
+    return x ./ sum(abs.(x), dims=2)
+end
+
+"""
+    act_dict = Dict(
+        :identity => _identity_act,
+        :tanh => _tanh_act,
+        :hardtanh => _hardtanh_act,
+    )
+
+Dictionary mapping features activation name to their function.
+"""
+const act_dict = Dict(
+    :identity => _identity_act,
+    :tanh => _tanh_act,
+    :hardtanh => _hardtanh_act,
+)
 
 end
