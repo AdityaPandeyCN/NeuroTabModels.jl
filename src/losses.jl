@@ -69,19 +69,22 @@ function (::MLog_Loss)(p::AbstractArray, y, w, offset)
     sum(vec(per_sample) .* vec(w)) / sum(w)
 end
 
+gaussian_mle_loss(μ::AbstractVector{T}, σ::AbstractVector{T}, y::AbstractVector{T}) where {T} =
+    -mean(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ))))
+
+gaussian_mle_loss(μ::AbstractVector{T}, σ::AbstractVector{T}, y::AbstractVector{T}, w::AbstractVector{T}) where {T} =
+    -sum((-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* w) / sum(w)
+
 struct GaussianMLE_Loss <: Lux.AbstractLossFunction end
 function (::GaussianMLE_Loss)(p::AbstractArray, y)
-    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
-    mean(-(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))))
+    gaussian_mle_loss(view(p, 1, :), view(p, 2, :), y)
 end
 function (::GaussianMLE_Loss)(p::AbstractArray, y, w)
-    μ, σ, T = view(p, 1, :), view(p, 2, :), eltype(p)
-    sum(-(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* w) / sum(w)
+    gaussian_mle_loss(view(p, 1, :), view(p, 2, :), y, w)
 end
 function (::GaussianMLE_Loss)(p::AbstractArray, y, w, offset)
     p_adj = p .+ offset
-    μ, σ, T = view(p_adj, 1, :), view(p_adj, 2, :), eltype(p_adj)
-    sum(-(-σ .- (y .- μ) .^ 2 ./ (2 .* max.(T(2e-7), exp.(2 .* σ)))) .* w) / sum(w)
+    gaussian_mle_loss(view(p_adj, 1, :), view(p_adj, 2, :), y, w)
 end
 
 const _loss_type_dict = Dict(

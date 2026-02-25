@@ -118,49 +118,44 @@ function mlogloss(m, x, y, w, offset; agg=mean)
 end
 
 
-gaussian_loss_elt(μ, σ, y) = -σ - (y - μ)^2 / (2 * max(2.0f-7, exp(2 * σ)))
+_gaussian_mle_elt(μ, σ, y) =
+    -σ - (y - μ)^2 / (2 * max(oftype(σ, 2e-7), exp(2 * σ)))
 
+_gaussian_mle_elt(μ, σ, y, w) =
+    (-σ - (y - μ)^2 / (2 * max(oftype(σ, 2e-7), exp(2 * σ)))) * w
 
-"""
-    gaussian_mle(m, x, y; agg=mean)
-    gaussian_mle(m, x, y, w; agg=mean)
-    gaussian_mle(m, x, y, w, offset; agg=mean)
-"""
 function gaussian_mle(m, x, y; agg=mean)
     p = m(x)
-    μ = view(p, :, 1)
-    σ = view(p, :, 2)
-    return agg(gaussian_loss_elt.(μ, σ, vec(y)))
+    metric = agg(_gaussian_mle_elt.(view(p, 1, :), view(p, 2, :), y))
+    return metric
 end
 function gaussian_mle(m, x, y, w; agg=mean)
     p = m(x)
-    μ = view(p, :, 1)
-    σ = view(p, :, 2)
-    return agg(gaussian_loss_elt.(μ, σ, vec(y)) .* vec(w))
+    metric = agg(_gaussian_mle_elt.(view(p, 1, :), view(p, 2, :), y, w))
+    return metric
 end
 function gaussian_mle(m, x, y, w, offset; agg=mean)
     p = m(x) .+ offset
-    μ = view(p, :, 1)
-    σ = view(p, :, 2)
-    return agg(gaussian_loss_elt.(μ, σ, vec(y)) .* vec(w))
+    metric = agg(_gaussian_mle_elt.(view(p, 1, :), view(p, 2, :), y, w))
+    return metric
 end
 
-function get_metric(ts::Training.TrainState, data, eval_compiled)
+function get_metric(ts::Training.TrainState, f::Function, data, model_compiled)
     ps, st = ts.parameters, Lux.testmode(ts.states)
+    m = x -> first(model_compiled(x, ps, st))
 
-    d0 = first(data)
-    metric_accum, ws_accum = eval_compiled(d0..., ps, st)
-
-    for (i, d) in enumerate(data)
-        i == 1 && continue
-        m_val, w_val = eval_compiled(d..., ps, st)
-        metric_accum = metric_accum .+ m_val
-        ws_accum = ws_accum .+ w_val
+    metric = 0.0f0
+    ws = 0.0f0
+    for d in data
+        metric += f(m, d...; agg=sum)
+        if length(d) >= 3
+            ws += sum(d[3])
+        else
+            ws += last(size(d[2]))
+        end
     end
-
-    _to_f64(x) = x isa Reactant.ConcretePJRTNumber ? Float64(x) :
-                 x isa Reactant.ConcretePJRTArray ? Float64(first(Array(x))) : Float64(x)
-    return _to_f64(metric_accum) / _to_f64(ws_accum)
+    metric = metric / ws
+    return metric
 end
 
 const metric_dict = Dict(
