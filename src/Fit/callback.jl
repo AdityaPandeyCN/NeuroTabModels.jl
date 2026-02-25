@@ -12,13 +12,14 @@ using Reactant: @compile
 
 export CallBack, init_logger, update_logger!, agg_logger
 
-struct CallBack{D,C}
+struct CallBack{F,D,C}
+    feval::F
     deval::D
-    eval_compiled::C
+    model_compiled::C
 end
 
 function (cb::CallBack)(logger, iter, ts::Training.TrainState)
-    metric = Metrics.get_metric(ts, cb.deval, cb.eval_compiled)
+    metric = Metrics.get_metric(ts, cb.feval, cb.deval, cb.model_compiled)
     update_logger!(logger; iter, metric)
     return nothing
 end
@@ -37,34 +38,11 @@ function CallBack(
     feval = metric_dict[config.metric]
     deval = get_df_loader_train(deval; feature_names, target_name, weight_name, offset_name, batchsize, shuffle=false) |> dev
 
-    chain = ts.model
     ps, st = ts.parameters, testmode(ts.states)
     d0 = first(deval)
-    eval_compiled = _compile_eval_step(chain, feval, d0, ps, st)
+    model_compiled = @compile ts.model(d0[1], ps, st)
 
-    return CallBack(deval, eval_compiled)
-end
-
-function _compile_eval_step(chain, feval, d0, ps, st)
-    if length(d0) == 2
-        function _step2(x, y, ps, st)
-            m = x -> first(chain(x, ps, st))
-            return feval(m, x, y; agg=sum), eltype(y)(size(y, ndims(y)))
-        end
-        return @compile _step2(d0[1], d0[2], ps, st)
-    elseif length(d0) == 3
-        function _step3(x, y, w, ps, st)
-            m = x -> first(chain(x, ps, st))
-            return feval(m, x, y, w; agg=sum), sum(w)
-        end
-        return @compile _step3(d0[1], d0[2], d0[3], ps, st)
-    else
-        function _step4(x, y, w, offset, ps, st)
-            m = x -> first(chain(x, ps, st))
-            return feval(m, x, y, w, offset; agg=sum), sum(w)
-        end
-        return @compile _step4(d0[1], d0[2], d0[3], d0[4], ps, st)
-    end
+    return CallBack(feval, deval, model_compiled)
 end
 
 function init_logger(config::LearnerTypes)
@@ -100,7 +78,6 @@ function update_logger!(logger; iter, metric)
 end
 
 function agg_logger(logger_raw::Vector{Dict})
-
     _l1 = first(logger_raw)
     best_iters = [d[:best_iter] for d in logger_raw]
     best_iter = ceil(Int, median(best_iters))
@@ -126,7 +103,6 @@ function agg_logger(logger_raw::Vector{Dict})
         :best_metrics => best_metrics,
         :best_metric => best_metric,
     )
-
     return logger
 end
 
