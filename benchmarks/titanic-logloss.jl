@@ -41,15 +41,16 @@ arch = NeuroTabModels.NeuroTreeConfig(;
     stack_size=1,
     hidden_size=1,
     actA=:identity,
+    MLE_tree_split=false,
 )
 
 learner = NeuroTabRegressor(
     arch;
-    loss=:logloss,
+    loss=:logloss, # FIXME: gaussian_mle don't train
     nrounds=100,
     early_stopping_rounds=2,
     lr=3e-2,
-    device=:gpu
+    device=:cpu
 )
 
 @time m = NeuroTabModels.fit(
