@@ -19,7 +19,7 @@ Union{NeuroTabModels.CuIterator, NeuroTabModels.DataLoader}
 const DL = Union{CuIterator,DataLoader}
 
 """
-infer(m::NeuroTabModel, data)
+    infer(m::NeuroTabModel, data)
 
 Return the inference of a `NeuroTabModel` over `data`, where `data` is `AbstractDataFrame`.
 """
