@@ -6,8 +6,8 @@ using Random: seed!
 Threads.nthreads()
 
 seed!(123)
-nobs = Int(1e6)
-num_feat = Int(100)
+nobs = Int(1e4)
+num_feat = Int(10)
 @info "testing with: $nobs observations | $num_feat features."
 X = rand(Float32, nobs, num_feat)
 Y = randn(Float32, size(X, 1))
@@ -35,11 +35,11 @@ arch = NeuroTabModels.NeuroTreeConfig(;
 
 learner = NeuroTabRegressor(
     arch;
-    loss=:mse,
+    loss=:gaussian_mle,
     nrounds=10,
     lr=1e-2,
     batchsize=2048,
-    device=:gpu
+    device=:cpu
 )
 
 # Reactant GPU: 5.970480 seconds (2.33 M allocations: 5.242 GiB, 3.80% gc time, 0.00% compilation time)
@@ -48,7 +48,7 @@ learner = NeuroTabRegressor(
 @time m = NeuroTabModels.fit(
     learner,
     dtrain;
-    # deval=dtrain, # FIXME: very slow when deval is used / crashed on GPU
+    deval=dtrain, # FIXME: very slow when deval is used / crashed on GPU
     target_name,
     feature_names,
     print_every_n=2,
@@ -57,4 +57,4 @@ learner = NeuroTabRegressor(
 # Reactant CPU: 0.952495 seconds (57.96 k allocations: 1.517 GiB, 0.23% gc time, 0.00% compilation time)
 # Reactant CPU: 10.326071 seconds (29.30 k allocations: 13.145 GiB, 1.97% gc time)
 # FIXME: need to adapt infer: returns only full batches: length of p_train must be == nrow(dtrain)
-@time p_train = m(dtrain; device=:gpu);
+@time p_train = m(dtrain; device=:cpu);
