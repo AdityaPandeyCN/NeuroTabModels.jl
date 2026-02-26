@@ -5,7 +5,6 @@ export LossType, MSE, MAE, LogLoss, MLogLoss, GaussianMLE, Tweedie
 
 import Statistics: mean
 import NNlib: logsigmoid, logsoftmax
-using Lux
 
 abstract type LossType end
 abstract type MSE <: LossType end
@@ -14,6 +13,38 @@ abstract type LogLoss <: LossType end
 abstract type MLogLoss <: LossType end
 abstract type GaussianMLE <: LossType end
 abstract type Tweedie <: LossType end
+
+function mse_loss(model, ps, st, data::Tuple{Any,Any})
+    pred, st_ = model(data[1], ps, st)
+    p = vec(pred); y = vec(data[2])
+    return mean((p .- y) .^ 2), st_, NamedTuple()
+end
+function mse_loss(model, ps, st, data::Tuple{Any,Any,Any})
+    pred, st_ = model(data[1], ps, st)
+    p = vec(pred); y = vec(data[2]); w = vec(data[3])
+    return sum((p .- y) .^ 2 .* w) / sum(w), st_, NamedTuple()
+end
+function mse_loss(model, ps, st, data::Tuple{Any,Any,Any,Any})
+    pred, st_ = model(data[1], ps, st)
+    p = vec(pred) .+ vec(data[4]); y = vec(data[2]); w = vec(data[3])
+    return sum((p .- y) .^ 2 .* w) / sum(w), st_, NamedTuple()
+end
+
+function mae_loss(model, ps, st, data::Tuple{Any,Any})
+    pred, st_ = model(data[1], ps, st)
+    p = vec(pred); y = vec(data[2])
+    return mean(abs.(p .- y)), st_, NamedTuple()
+end
+function mae_loss(model, ps, st, data::Tuple{Any,Any,Any})
+    pred, st_ = model(data[1], ps, st)
+    p = vec(pred); y = vec(data[2]); w = vec(data[3])
+    return sum(abs.(p .- y) .* w) / sum(w), st_, NamedTuple()
+end
+function mae_loss(model, ps, st, data::Tuple{Any,Any,Any,Any})
+    pred, st_ = model(data[1], ps, st)
+    p = vec(pred) .+ vec(data[4]); y = vec(data[2]); w = vec(data[3])
+    return sum(abs.(p .- y) .* w) / sum(w), st_, NamedTuple()
+end
 
 function logloss(model, ps, st, data::Tuple{Any,Any})
     pred, st_ = model(data[1], ps, st)
@@ -102,8 +133,8 @@ function gaussian_mle(model, ps, st, data::Tuple{Any,Any,Any,Any})
     return loss, st_, NamedTuple()
 end
 
-get_loss_fn(::Type{<:MSE}) = MSELoss()
-get_loss_fn(::Type{<:MAE}) = MAELoss()
+get_loss_fn(::Type{<:MSE}) = mse_loss
+get_loss_fn(::Type{<:MAE}) = mae_loss
 get_loss_fn(::Type{<:LogLoss}) = logloss
 get_loss_fn(::Type{<:MLogLoss}) = mlogloss
 get_loss_fn(::Type{<:GaussianMLE}) = gaussian_mle
