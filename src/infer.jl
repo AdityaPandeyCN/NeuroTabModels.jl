@@ -16,12 +16,9 @@ import MLUtils: DataLoader
 export infer
 
 function _get_device(device::Symbol)
-    if device == :gpu
-        Reactant.set_default_backend("gpu")
-        return reactant_device()
-    else
-        return cpu_device()
-    end
+    backend = device == :gpu ? "gpu" : "cpu"
+    Reactant.set_default_backend(backend)
+    return reactant_device()
 end
 
 function _postprocess(::Type{<:Union{MSE,MAE}}, raw_preds)
@@ -59,28 +56,18 @@ function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
 
     raw_preds = Vector{AbstractArray}()
 
-    if device == :gpu
-        b_first = first(data)
-        x0 = b_first isa Tuple ? b_first[1] : b_first
-        model_compiled = @compile m.chain(dev(x0), ps, st)
-        
-        for b in data
-            x = b isa Tuple ? b[1] : b
-            
-            if size(x) == size(x0)
-                y_pred, _ = model_compiled(dev(x), ps, st)
-                push!(raw_preds, cdev(y_pred))
-            else
-                y_pred, _ = Reactant.@jit Lux.apply(m.chain, dev(x), ps, st)
-                push!(raw_preds, cdev(y_pred))
-            end
+    b_first = first(data)
+    x0 = b_first isa Tuple ? b_first[1] : b_first
+    model_compiled = @compile m.chain(dev(x0), ps, st)
+
+    for b in data
+        x = b isa Tuple ? b[1] : b
+        if size(x) == size(x0)
+            y_pred, _ = model_compiled(dev(x), ps, st)
+        else
+            y_pred, _ = Reactant.@jit Lux.apply(m.chain, dev(x), ps, st)
         end
-    else
-        for b in data
-            x = b isa Tuple ? b[1] : b
-            y_pred, _ = Lux.apply(m.chain, x, ps, st)
-            push!(raw_preds, cdev(y_pred))
-        end
+        push!(raw_preds, cdev(y_pred))
     end
 
     return _postprocess(L, raw_preds)
