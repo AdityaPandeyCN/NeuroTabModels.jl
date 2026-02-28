@@ -119,11 +119,11 @@ function _identity_act(x)
     return x ./ sum(abs.(x), dims=2)
 end
 function _tanh_act(x)
-    x = Flux.tanh_fast.(x)
+    x = tanh_fast.(x)
     return x ./ sum(abs.(x), dims=2)
 end
 function _hardtanh_act(x)
-    x = Flux.hardtanh.(x)
+    x = hardtanh.(x)
     return x ./ sum(abs.(x), dims=2)
 end
 
