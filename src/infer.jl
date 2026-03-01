@@ -1,10 +1,8 @@
 module Infer
-
 using ..Data
 using ..Losses
+using ..Losses: reduce_pred
 using ..Models
-using ..Learners
-
 using Lux
 using Lux: cpu_device, reactant_device
 using Reactant
@@ -12,7 +10,6 @@ using Reactant: @compile
 using NNlib: sigmoid, softmax
 using DataFrames: AbstractDataFrame
 import MLUtils: DataLoader
-
 export infer
 
 function _get_device(device::Symbol)
@@ -53,13 +50,10 @@ function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
     cdev = cpu_device()
     ps = dev(m.info[:ps])
     st = dev(m.info[:st])
-
     raw_preds = Vector{AbstractArray}()
-
     b_first = first(data)
     x0 = b_first isa Tuple ? b_first[1] : b_first
     model_compiled = @compile m.chain(dev(x0), ps, st)
-
     for b in data
         x = b isa Tuple ? b[1] : b
         if size(x) == size(x0)
@@ -67,23 +61,18 @@ function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
         else
             y_pred, _ = Reactant.@jit Lux.apply(m.chain, dev(x), ps, st)
         end
-        push!(raw_preds, cdev(y_pred))
+        push!(raw_preds, cdev(reduce_pred(y_pred)))  
     end
-
     return _postprocess(L, raw_preds)
 end
-
 function infer(m::NeuroTabModel, data::AbstractDataFrame; device=:cpu)
     dinfer = get_df_loader_infer(data; feature_names=m.info[:feature_names], batchsize=2048)
     return infer(m, dinfer; device=device)
 end
-
 function (m::NeuroTabModel)(data::AbstractDataFrame; device=:cpu)
     return infer(m, data; device=device)
 end
-
 function (m::NeuroTabModel)(x::AbstractMatrix; device=:cpu)
     return infer(m, [(x,)]; device=device)
 end
-
 end
