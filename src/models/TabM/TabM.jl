@@ -13,54 +13,65 @@ import ..Embeddings: PeriodicEmbeddings, LinearEmbeddings, PiecewiseLinearEmbedd
 
 include("layers.jl")
 
-# ─── Reactant-safe flatten for embeddings ────────────────────────
-# (d_emb, nfeats, batch) → (d_emb * nfeats, batch)
+# ─── Helpers ─────────────────────────────────────────────────────
+
 _flatten_emb(x::AbstractArray{T,3}) where {T} = reshape(x, :, size(x, 3))
-# Pass-through for 2D (in case embedding already flattens)
 _flatten_emb(x::AbstractMatrix) = x
 
 # ─── Backbone builders ──────────────────────────────────────────
 
-function _batch_ensemble_backbone(; d_in, n_blocks, d_block, dropout, k, scaling_init)
+# Full BatchEnsemble (tabm_init=True pattern):
+#   Layer 0: R=scaling_init (with chunks), S=ones
+#   Layer 1+: R=ones, S=ones
+function _batch_ensemble_backbone(;
+        d_in::Int, n_blocks::Int, d_block::Int, dropout::Float64,
+        k::Int, scaling_init::Symbol, d_features::Vector{Int})
     layers = []
     for i in 1:n_blocks
-        ind = i == 1 ? d_in : d_block
-        si = i == 1 ? scaling_init : :ones
-        push!(layers, LinearEfficientEnsemble(ind, d_block;
-            k=k, scaling_init=si,
-            ensemble_scaling_in=true, ensemble_scaling_out=true,
-            bias=true, ensemble_bias=true))
+        d_in_i = (i == 1) ? d_in : d_block
+        if i == 1
+            push!(layers, LinearBatchEnsemble(d_in_i, d_block;
+                k, scaling_init = (scaling_init, :ones),
+                first_scaling_init_chunks = d_features))
+        else
+            push!(layers, LinearBatchEnsemble(d_in_i, d_block;
+                k, scaling_init = :ones))
+        end
         push!(layers, WrappedFunction(_broadcast_relu))
         dropout > 0 && push!(layers, Dropout(dropout))
     end
     return layers
 end
 
-function _mini_ensemble_backbone(; d_in, n_blocks, d_block, dropout, k, scaling_init)
-    layers = Any[ScaleEnsemble(k, d_in; init=scaling_init)]
+# Mini-ensemble: ScaleEnsemble adapter → shared Dense backbone
+function _mini_ensemble_backbone(;
+        d_in::Int, n_blocks::Int, d_block::Int, dropout::Float64,
+        k::Int, scaling_init::Symbol, d_features::Vector{Int})
+    layers = Any[ScaleEnsemble(k, d_in;
+        init = scaling_init, init_chunks = d_features, bias = false)]
     for i in 1:n_blocks
-        ind = i == 1 ? d_in : d_block
-        push!(layers, LinearEfficientEnsemble(ind, d_block;
-            k=k, ensemble_scaling_in=false, ensemble_scaling_out=false,
-            bias=true, ensemble_bias=false))
+        d_in_i = (i == 1) ? d_in : d_block
+        push!(layers, SharedDense(d_in_i, d_block))
         push!(layers, WrappedFunction(_broadcast_relu))
         dropout > 0 && push!(layers, Dropout(dropout))
     end
     return layers
 end
 
-function _packed_ensemble_backbone(; d_in, n_blocks, d_block, dropout, k)
+# Packed ensemble: k fully independent MLPs
+function _packed_ensemble_backbone(;
+        d_in::Int, n_blocks::Int, d_block::Int, dropout::Float64, k::Int)
     layers = []
     for i in 1:n_blocks
-        ind = i == 1 ? d_in : d_block
-        push!(layers, LinearEnsemble(ind, d_block, k))
+        d_in_i = (i == 1) ? d_in : d_block
+        push!(layers, LinearEnsemble(d_in_i, d_block, k))
         push!(layers, WrappedFunction(_broadcast_relu))
         dropout > 0 && push!(layers, Dropout(dropout))
     end
     return layers
 end
 
-# ─── TabMConfig ─────────────────────────────────────────────────
+# ─── TabMConfig ──────────────────────────────────────────────────
 
 struct TabMConfig <: Architecture
     k::Int
@@ -73,20 +84,24 @@ struct TabMConfig <: Architecture
     use_embeddings::Bool
     d_embedding::Int
     embedding_type::Symbol
+    bins::Union{Nothing,Vector{Vector{Float32}}}
 end
 
 function TabMConfig(; kwargs...)
+    has_embeddings = get(kwargs, :use_embeddings, false)
+
     args = Dict{Symbol,Any}(
         :k => 32,
-        :n_blocks => 3,
+        :n_blocks => has_embeddings ? 2 : 3,
         :d_block => 512,
         :dropout => 0.1,
         :arch_type => :tabm,
-        :scaling_init => :random_signs,
+        :scaling_init => has_embeddings ? :normal : :random_signs,
         :MLE_tree_split => false,
         :use_embeddings => false,
         :d_embedding => 24,
         :embedding_type => :periodic,
+        :bins => nothing,
     )
 
     args_ignored = setdiff(keys(kwargs), keys(args))
@@ -102,16 +117,10 @@ function TabMConfig(; kwargs...)
     end
 
     return TabMConfig(
-        args[:k],
-        args[:n_blocks],
-        args[:d_block],
-        args[:dropout],
-        Symbol(args[:arch_type]),
-        Symbol(args[:scaling_init]),
-        args[:MLE_tree_split],
-        args[:use_embeddings],
-        args[:d_embedding],
-        Symbol(args[:embedding_type]),
+        args[:k], args[:n_blocks], args[:d_block], args[:dropout],
+        Symbol(args[:arch_type]), Symbol(args[:scaling_init]),
+        args[:MLE_tree_split], args[:use_embeddings],
+        args[:d_embedding], Symbol(args[:embedding_type]), args[:bins],
     )
 end
 
@@ -119,42 +128,40 @@ function (config::TabMConfig)(; nfeats, outsize)
     k = config.k
     d_block = config.d_block
 
-    # ── 1. Feature Processing ────────────────────────────────────
+    # 1. Feature processing + d_features for chunk init
     if config.use_embeddings
-        if config.embedding_type == :periodic
-            emb_layer = PeriodicEmbeddings(nfeats, config.d_embedding)
-            d_out_per_feature = config.d_embedding
+        emb_layer = if config.embedding_type == :periodic
+            PeriodicEmbeddings(nfeats, config.d_embedding)
         elseif config.embedding_type == :linear
-            emb_layer = LinearEmbeddings(nfeats, config.d_embedding)
-            d_out_per_feature = config.d_embedding
+            LinearEmbeddings(nfeats, config.d_embedding)
         elseif config.embedding_type == :piecewise
-            emb_layer = PiecewiseLinearEmbeddings(nfeats, config.d_embedding)
-            d_out_per_feature = config.d_embedding
+            @assert config.bins !== nothing "Piecewise embeddings require bins"
+            @assert length(config.bins) == nfeats "Expected $nfeats bin vectors, got $(length(config.bins))"
+            PiecewiseLinearEmbeddings(config.bins, config.d_embedding)
         else
-            error("Unsupported embedding type: $(config.embedding_type). Use :periodic, :linear, or :piecewise")
+            error("Unsupported embedding type: $(config.embedding_type)")
         end
-
-        # Flatten (d_emb, nfeats, B) → (d_emb * nfeats, B)
-        feature_processor = Chain(emb_layer, WrappedFunction(_flatten_emb))
-        d_in = nfeats * d_out_per_feature
-
-        # Paper Section A.2: with embeddings, init first R from N(0,1)
+        feature_layers = [emb_layer, WrappedFunction(_flatten_emb)]
+        d_in = nfeats * config.d_embedding
+        d_features = fill(config.d_embedding, nfeats)
         effective_scaling_init = :normal
     else
-        feature_processor = BatchNorm(nfeats)
+        # No preprocessing — raw features pass through directly
+        feature_layers = []
         d_in = nfeats
+        d_features = ones(Int, nfeats)
         effective_scaling_init = config.scaling_init
     end
 
-    # ── 2. Backbone ──────────────────────────────────────────────
+    # 2. Backbone
     bb = if config.arch_type == :tabm
         _batch_ensemble_backbone(; d_in, n_blocks=config.n_blocks,
             d_block, dropout=config.dropout, k,
-            scaling_init=effective_scaling_init)
+            scaling_init=effective_scaling_init, d_features)
     elseif config.arch_type == :tabm_mini
         _mini_ensemble_backbone(; d_in, n_blocks=config.n_blocks,
             d_block, dropout=config.dropout, k,
-            scaling_init=effective_scaling_init)
+            scaling_init=effective_scaling_init, d_features)
     elseif config.arch_type == :tabm_packed
         _packed_ensemble_backbone(; d_in, n_blocks=config.n_blocks,
             d_block, dropout=config.dropout, k)
@@ -162,25 +169,18 @@ function (config::TabMConfig)(; nfeats, outsize)
         error("Unknown arch_type: $(config.arch_type)")
     end
 
-    # ── 3. Head ──────────────────────────────────────────────────
+    # 3. Head: k independent predictions → average
     head = if config.MLE_tree_split && outsize == 2
         split_out = outsize ÷ 2
-        Parallel(
-            vcat,
+        Parallel(vcat,
             Chain(LinearEnsemble(d_block, split_out, k), MeanEnsemble()),
-            Chain(LinearEnsemble(d_block, split_out, k), MeanEnsemble()),
-        )
+            Chain(LinearEnsemble(d_block, split_out, k), MeanEnsemble()))
     else
         Chain(LinearEnsemble(d_block, outsize, k), MeanEnsemble())
     end
 
-    # ── 4. Full Model ────────────────────────────────────────────
-    return Chain(
-        feature_processor,
-        EnsembleView(k),
-        bb...,
-        head,
-    )
+    # 4. Full model
+    return Chain(feature_layers..., EnsembleView(k), bb..., head)
 end
 
 end # module

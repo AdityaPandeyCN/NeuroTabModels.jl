@@ -8,8 +8,6 @@ struct Periodic <: Lux.AbstractLuxLayer
     sigma::Float32
 end
 
-# NOTE: Struct defines Periodic(n, k, sigma) automatically.
-
 function Lux.initialparameters(rng::AbstractRNG, l::Periodic)
     bound = l.sigma * 3f0
     w = clamp.(l.sigma .* randn(rng, Float32, l.n_frequencies, l.n_features), -bound, bound)
@@ -25,10 +23,14 @@ function (l::Periodic)(x::AbstractMatrix, ps, st)
     return vcat(cos.(z), sin.(z)), st
 end
 
-struct PeriodicEmbeddings{P,L,A} <: Lux.AbstractLuxLayer
+# ─── PeriodicEmbeddings (container) ──────────────────────────────
+# Lux auto-generates initialparameters/initialstates by recursing
+# into the fields listed in the type parameter.
+
+struct PeriodicEmbeddings{P,L} <: Lux.AbstractLuxContainerLayer{(:periodic, :linear)}
     periodic::P
     linear::L
-    activation::A
+    activation::Bool
     lite::Bool
 end
 
@@ -43,28 +45,16 @@ function PeriodicEmbeddings(
     if lite && !activation
         error("lite=true is allowed only when activation=true")
     end
-
     periodic = Periodic(n_features, n_frequencies, frequency_init_scale)
-
-    if lite
-        linear = Dense(2 * n_frequencies => d_embedding)
+    linear = if lite
+        Dense(2 * n_frequencies => d_embedding)
     else
-        linear = NLinear(n_features, 2 * n_frequencies, d_embedding)
+        NLinear(n_features, 2 * n_frequencies, d_embedding)
     end
-
-    act = activation ? NNlib.relu : identity
-    return PeriodicEmbeddings(periodic, linear, act, lite)
+    return PeriodicEmbeddings(periodic, linear, activation, lite)
 end
 
-function Lux.initialparameters(rng::AbstractRNG, m::PeriodicEmbeddings)
-    return (periodic=Lux.initialparameters(rng, m.periodic),
-            linear=Lux.initialparameters(rng, m.linear))
-end
-
-function Lux.initialstates(rng::AbstractRNG, m::PeriodicEmbeddings)
-    return (periodic=Lux.initialstates(rng, m.periodic),
-            linear=Lux.initialstates(rng, m.linear))
-end
+# No manual initialparameters/initialstates needed — Lux handles it.
 
 function (m::PeriodicEmbeddings)(x::AbstractMatrix, ps, st)
     h, st_p = m.periodic(x, ps.periodic, st.periodic)
@@ -78,5 +68,8 @@ function (m::PeriodicEmbeddings)(x::AbstractMatrix, ps, st)
         m.linear(h, ps.linear, st.linear)
     end
 
-    return m.activation.(h), (periodic=st_p, linear=st_l)
+    if m.activation
+        h = NNlib.relu.(h)
+    end
+    return h, (periodic=st_p, linear=st_l)
 end

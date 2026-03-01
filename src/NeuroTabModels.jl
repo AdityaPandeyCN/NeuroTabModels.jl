@@ -3,6 +3,7 @@ module NeuroTabModels
 using Random
 
 export NeuroTabRegressor, NeuroTabClassifier, NeuroTabModel
+export TabMConfig, compute_bins  # ← ADD
 
 include("data.jl")
 include("losses.jl")
