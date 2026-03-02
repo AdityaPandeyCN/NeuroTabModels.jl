@@ -182,10 +182,10 @@ function (config::TabMConfig)(; nfeats, outsize)
     head = if config.MLE_tree_split && outsize == 2
         split_out = outsize ÷ 2
         Parallel(vcat,
-            Chain(LinearEnsemble(d_block, split_out, k), MeanEnsemble()),
-            Chain(LinearEnsemble(d_block, split_out, k), MeanEnsemble()))
+            Chain(LinearEnsemble(d_block, split_out, k)),
+            Chain(LinearEnsemble(d_block, split_out, k)))
     else
-        Chain(LinearEnsemble(d_block, outsize, k), MeanEnsemble())
+        Chain(LinearEnsemble(d_block, outsize, k))
     end
 
     return Chain(feature_layers..., EnsembleView(k), bb..., head)

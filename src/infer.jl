@@ -2,6 +2,7 @@ module Infer
 
 using ..Data
 using ..Losses
+using ..Losses: reduce_pred
 using ..Models
 
 using Lux
@@ -20,19 +21,26 @@ function _get_device(device::Symbol)
     return reactant_device()
 end
 
+_activation(::Type{<:MLogLoss}) = x -> softmax(x; dims=1)
+_activation(::Type{<:LogLoss}) = x -> sigmoid.(x)
+_activation(::Type{<:Tweedie}) = x -> exp.(x)
+_activation(::Type) = identity
+
+function _reduce(y, act)
+    return reduce_pred(act(y))
+end
+
 function _postprocess(::Type{<:Union{MSE,MAE}}, raw_preds)
     return vcat([vec(p) for p in raw_preds]...)
 end
 
 function _postprocess(::Type{<:LogLoss}, raw_preds)
-    p = vcat([vec(p) for p in raw_preds]...)
-    return sigmoid.(p)
+    return vcat([vec(p) for p in raw_preds]...)
 end
 
 function _postprocess(::Type{<:MLogLoss}, raw_preds)
     p_full = reduce(hcat, raw_preds)
-    p_soft = softmax(p_full; dims=1)
-    return Matrix(p_soft')
+    return Matrix(p_full')
 end
 
 function _postprocess(::Type{<:GaussianMLE}, raw_preds)
@@ -43,8 +51,7 @@ function _postprocess(::Type{<:GaussianMLE}, raw_preds)
 end
 
 function _postprocess(::Type{<:Tweedie}, raw_preds)
-    p = vcat([vec(p) for p in raw_preds]...)
-    return exp.(p)
+    return vcat([vec(p) for p in raw_preds]...)
 end
 
 function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
@@ -52,6 +59,7 @@ function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
     cdev = cpu_device()
     ps = dev(m.info[:ps])
     st = dev(m.info[:st])
+    act = _activation(L)
 
     raw_preds = Vector{AbstractArray}()
 
@@ -66,7 +74,7 @@ function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
         else
             y_pred, _ = Reactant.@jit Lux.apply(m.chain, dev(x), ps, st)
         end
-        push!(raw_preds, cdev(y_pred))
+        push!(raw_preds, cdev(_reduce(y_pred, act)))
     end
 
     return _postprocess(L, raw_preds)

@@ -120,7 +120,6 @@ function PiecewiseLinearEmbeddings(
 end
 
 function Lux.initialparameters(rng::AbstractRNG, m::PiecewiseLinearEmbeddings)
-    ps = Lux.initialparameters(rng, Lux.StatefulLuxLayer{true}(m, nothing, nothing))
     ps_l0 = m.linear0 === nothing ? nothing : Lux.initialparameters(rng, m.linear0)
     ps_enc = Lux.initialparameters(rng, m.encoding)
     ps_lin = Lux.initialparameters(rng, m.linear)
