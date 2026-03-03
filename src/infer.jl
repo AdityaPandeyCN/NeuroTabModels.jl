@@ -26,8 +26,9 @@ _activation(::Type{<:LogLoss}) = x -> sigmoid.(x)
 _activation(::Type{<:Tweedie}) = x -> exp.(x)
 _activation(::Type) = identity
 
-function _reduce(y, act)
-    return act(reduce_pred(y))
+function _forward_reduce(chain, x, ps, st)
+    y_pred, st_ = chain(x, ps, st)
+    return reduce_pred(y_pred), st_
 end
 
 function _postprocess(::Type{<:Union{MSE,MAE}}, raw_preds)
@@ -65,16 +66,16 @@ function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
 
     b_first = first(data)
     x0 = b_first isa Tuple ? b_first[1] : b_first
-    model_compiled = @compile m.chain(dev(x0), ps, st)
+    compiled = @compile _forward_reduce(m.chain, dev(x0), ps, st)
 
     for b in data
         x = b isa Tuple ? b[1] : b
         if size(x) == size(x0)
-            y_pred, _ = model_compiled(dev(x), ps, st)
+            y_reduced, _ = compiled(m.chain, dev(x), ps, st)
         else
-            y_pred, _ = Reactant.@jit Lux.apply(m.chain, dev(x), ps, st)
+            y_reduced, _ = Reactant.@jit _forward_reduce(m.chain, dev(x), ps, st)
         end
-        push!(raw_preds, _reduce(cdev(y_pred), act))
+        push!(raw_preds, act(cdev(y_reduced)))
     end
 
     return _postprocess(L, raw_preds)
