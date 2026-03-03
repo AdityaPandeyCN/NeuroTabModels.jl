@@ -4,11 +4,24 @@ using LuxLib: batched_matmul
 using Random: AbstractRNG
 using NNlib: relu
 
+"""
+    _init_rsqrt_uniform(rng, dims, d) → Array{Float32}
+
+Uniform init in `[-1/√d, 1/√d]`.
+"""
 function _init_rsqrt_uniform(rng::AbstractRNG, dims, d::Int)
     s = Float32(1 / sqrt(d))
     return s .* (2f0 .* rand(rng, Float32, dims...) .- 1f0)
 end
 
+"""
+    _init_scaling(rng, dims, init) → Array{Float32}
+
+Initialize scaling vectors for ensemble adapters.
+- `:ones` — deterministic ones
+- `:normal` — N(0,1)
+- `:random_signs` — ±1
+"""
 function _init_scaling(rng::AbstractRNG, dims, init::Symbol)
     if init == :ones
         return ones(Float32, dims...)
@@ -21,6 +34,13 @@ function _init_scaling(rng::AbstractRNG, dims, init::Symbol)
     end
 end
 
+"""
+    _init_scaling_with_chunks(rng, dims, init, chunks) → Array{Float32}
+
+Initialize scaling with grouped chunks. Each chunk shares the same random value
+per ensemble member, providing structured diversity for features with different
+representation sizes.
+"""
 function _init_scaling_with_chunks(rng::AbstractRNG, dims::Tuple{Int,Int},
                                     init::Symbol, chunks::Vector{Int})
     d, k = dims
@@ -42,9 +62,6 @@ _broadcast_relu(x) = relu.(x)
 
 Broadcasts a `(D, B)` matrix to `(D, K, B)` by repeating along dim 2.
 Passes through `(D, K, B)` input unchanged.
-
-# Arguments
-- `k::Int`: Number of ensemble members.
 """
 struct EnsembleView <: AbstractLuxLayer
     k::Int
@@ -67,14 +84,18 @@ end
     LinearBatchEnsemble(in_f, out_f; k, scaling_init=:random_signs,
                         first_scaling_init_chunks=nothing, bias=true)
 
-Batch-ensemble linear: `y = S ⊙ (W(R ⊙ x)) + bias` with shared `W` and per-member `R`, `S`, `bias`.
+Batch-ensemble linear: `y = S ⊙ (W(R ⊙ x)) + bias` with shared `W` and
+per-member `R`, `S`, `bias`.
+
+Equivalent to defining per-member weight matrices `Wᵢ = W ⊙ (sᵢrᵢᵀ)`.
 
 # Arguments
 - `in_f::Int`: Input dimension.
 - `out_f::Int`: Output dimension.
 - `k::Int`: Number of ensemble members.
-- `scaling_init`: Init for R/S scaling vectors. A `Symbol` (applied to both) or `Tuple{Symbol,Symbol}` for `(R, S)`. Options: `:ones`, `:normal`, `:random_signs`.
-- `first_scaling_init_chunks::Union{Nothing, Vector{Int}}`: Chunk sizes for R init when features have different representation sizes.
+- `scaling_init`: Init for R/S. A `Symbol` (applied to both) or
+  `Tuple{Symbol,Symbol}` for `(R, S)`. Options: `:ones`, `:normal`, `:random_signs`.
+- `first_scaling_init_chunks`: Chunk sizes for grouped R init.
 - `bias::Bool`: Include per-member bias (default `true`).
 """
 struct LinearBatchEnsemble <: AbstractLuxLayer
@@ -104,13 +125,12 @@ function LuxCore.initialparameters(rng::AbstractRNG, m::LinearBatchEnsemble)
     else
         _init_scaling(rng, (m.in_features, m.k), m.r_init)
     end
-
     s = _init_scaling(rng, (m.out_features, m.k), m.s_init)
 
     d = (; weight, r, s)
     if m.use_bias
-        b0 = _init_rsqrt_uniform(rng, (m.out_features,), m.in_features)
-        d = merge(d, (; bias = repeat(reshape(b0, :, 1), 1, m.k)))
+        bias = _init_rsqrt_uniform(rng, (m.out_features, m.k), m.in_features)
+        d = merge(d, (; bias))
     end
     return d
 end
@@ -127,7 +147,6 @@ function (m::LinearBatchEnsemble)(x::AbstractArray{T,3}, ps, st) where {T}
     end
     return x, st
 end
-
 
 """
     SharedDense(in_features, out_features)
@@ -158,7 +177,6 @@ function (m::SharedDense)(x::AbstractArray{T,3}, ps, st) where {T}
     out = ps.weight * reshape(x, d_in, k * batch) .+ ps.bias
     return reshape(out, m.out_features, k, batch), st
 end
-
 
 """
     LinearEnsemble(in_f, out_f, k; bias=true)
@@ -209,8 +227,8 @@ Per-member elementwise scaling (and optional bias).
 # Arguments
 - `k::Int`: Number of ensemble members.
 - `d::Int`: Feature dimension.
-- `init::Symbol`: Weight init — `:ones`, `:normal`, or `:random_signs` (default).
-- `init_chunks::Union{Nothing, Vector{Int}}`: Chunk sizes for grouped init.
+- `init::Symbol`: Weight init — `:ones`, `:normal`, or `:random_signs`.
+- `init_chunks`: Chunk sizes for grouped init.
 - `bias::Bool`: Include per-member additive bias (default `false`).
 """
 struct ScaleEnsemble <: AbstractLuxLayer
@@ -256,6 +274,7 @@ end
     MeanEnsemble()
 
 Averages over the ensemble (K) dimension: `(D, K, B)` → `(D, B)`.
+Equivalent to `reduce_pred` but as a Lux layer.
 """
 struct MeanEnsemble <: AbstractLuxLayer end
 

@@ -85,7 +85,8 @@ end
     PiecewiseLinearEmbeddings(bins, d_embedding; activation=false, version=:B)
 
 Learnable embeddings on top of `PiecewiseLinearEncoding`.
-Version `:A`: PLE → NLinear (with bias). Version `:B`: PLE → NLinear (zero-init) + LinearEmbeddings residual.
+Version `:A`: PLE → NLinear (with bias).
+Version `:B`: PLE → NLinear (zero-init, no bias) + LinearEmbeddings residual.
 Output shape `(d_embedding, n_features, batch)`.
 
 # Arguments
@@ -122,10 +123,12 @@ end
 function Lux.initialparameters(rng::AbstractRNG, m::PiecewiseLinearEmbeddings)
     ps_l0 = m.linear0 === nothing ? nothing : Lux.initialparameters(rng, m.linear0)
     ps_enc = Lux.initialparameters(rng, m.encoding)
-    ps_lin = Lux.initialparameters(rng, m.linear)
 
     if m.version == :B
-        ps_lin = merge(ps_lin, (weight=zeros(Float32, size(ps_lin.weight)...),))
+        n = m.linear.n
+        ps_lin = (weight=zeros(Float32, m.linear.out_features, m.linear.in_features, n),)
+    else
+        ps_lin = Lux.initialparameters(rng, m.linear)
     end
 
     return (linear0=ps_l0, encoding=ps_enc, linear=ps_lin)

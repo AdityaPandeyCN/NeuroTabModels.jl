@@ -27,7 +27,7 @@ _activation(::Type{<:Tweedie}) = x -> exp.(x)
 _activation(::Type) = identity
 
 function _reduce(y, act)
-    return reduce_pred(act(y))
+    return act(reduce_pred(y))
 end
 
 function _postprocess(::Type{<:Union{MSE,MAE}}, raw_preds)
@@ -74,7 +74,7 @@ function infer(m::NeuroTabModel{L}, data; device=:cpu) where {L}
         else
             y_pred, _ = Reactant.@jit Lux.apply(m.chain, dev(x), ps, st)
         end
-        push!(raw_preds, cdev(_reduce(y_pred, act)))
+        push!(raw_preds, _reduce(cdev(y_pred), act))
     end
 
     return _postprocess(L, raw_preds)

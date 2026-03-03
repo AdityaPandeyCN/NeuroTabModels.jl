@@ -1,15 +1,18 @@
 """
     compute_bins(X; n_bins=48)
 
-Compute bin boundaries for PiecewiseLinearEncoding/Embeddings using quantiles.
+Compute quantile-based bin boundaries for `PiecewiseLinearEncoding`/`PiecewiseLinearEmbeddings`.
+
+Note: `X` should have shape `(n_samples, n_features)`, which is the transpose of the
+model input convention `(n_features, batch)`. Transpose your data before calling this.
 
 # Arguments
-- `X`: Matrix of shape (n_samples, n_features), training data.
-- `n_bins`: Number of bins per feature (default 48).
+- `X::AbstractMatrix`: Training data of shape `(n_samples, n_features)`.
+- `n_bins::Int`: Number of bins per feature (default `48`).
 
 # Returns
-- `Vector{Vector{Float32}}`: List of bin edges for each feature.
-
+- `Vector{Vector{Float32}}`: Bin edges for each feature. Each vector has between 2 and
+  `n_bins + 1` elements (fewer if quantiles coincide for low-cardinality features).
 """
 function compute_bins(X::AbstractMatrix; n_bins::Int=48)
     n_samples, n_features = size(X)

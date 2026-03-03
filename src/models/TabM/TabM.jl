@@ -13,8 +13,17 @@ import ..Embeddings: PeriodicEmbeddings, LinearEmbeddings, PiecewiseLinearEmbedd
 
 include("layers.jl")
 
-_flatten_emb(x::AbstractArray{T,3}) where {T} = reshape(x, :, size(x, 3))
-_flatten_emb(x::AbstractMatrix) = x
+"""
+    FlattenEmb()
+
+Reshapes 3D embedding output `(d_embedding, n_features, batch)` → `(d_embedding * n_features, batch)`.
+Passes through 2D input unchanged.
+"""
+struct FlattenEmb <: Lux.AbstractLuxLayer end
+LuxCore.initialparameters(::AbstractRNG, ::FlattenEmb) = (;)
+LuxCore.initialstates(::AbstractRNG, ::FlattenEmb) = (;)
+(::FlattenEmb)(x::AbstractArray{T,3}, ps, st) where {T} = reshape(x, :, size(x, 3)), st
+(::FlattenEmb)(x::AbstractMatrix, ps, st) = x, st
 
 function _batch_ensemble_backbone(;
         d_in::Int, n_blocks::Int, d_block::Int, dropout::Float64,
@@ -23,10 +32,14 @@ function _batch_ensemble_backbone(;
     for i in 1:n_blocks
         d_in_i = (i == 1) ? d_in : d_block
         if i == 1
+            # First layer: random R (scaling_init), deterministic S (:ones)
+            # Paper Section 3.3: only the first R adapter is randomly initialized
             push!(layers, LinearBatchEnsemble(d_in_i, d_block;
                 k, scaling_init = (scaling_init, :ones),
                 first_scaling_init_chunks = d_features))
         else
+            # Subsequent layers: deterministic R and S (both :ones)
+            # At init behaves like TabM_mini; adapters free to diverge during training
             push!(layers, LinearBatchEnsemble(d_in_i, d_block;
                 k, scaling_init = :ones))
         end
@@ -39,6 +52,7 @@ end
 function _mini_ensemble_backbone(;
         d_in::Int, n_blocks::Int, d_block::Int, dropout::Float64,
         k::Int, scaling_init::Symbol, d_features::Vector{Int})
+    # MiniEnsemble: only the very first adapter R, all other weights shared
     layers = Any[ScaleEnsemble(k, d_in;
         init = scaling_init, init_chunks = d_features, bias = false)]
     for i in 1:n_blocks
@@ -52,6 +66,7 @@ end
 
 function _packed_ensemble_backbone(;
         d_in::Int, n_blocks::Int, d_block::Int, dropout::Float64, k::Int)
+    # Packed-Ensemble: k fully independent MLPs via batched matmul
     layers = []
     for i in 1:n_blocks
         d_in_i = (i == 1) ? d_in : d_block
@@ -65,7 +80,13 @@ end
 """
     TabMConfig(; kwargs...)
 
-Configuration for TabM ensemble architectures.
+Configuration for TabM ensemble architectures (Gorishniy et al., ICLR 2025).
+
+This implements the TabM♠ variant (shared training batches), where all k ensemble
+members see the same training batch.
+
+The chain output is 3D: `(outsize, k, batch)`. Ensemble averaging is handled by
+`Losses.reduce_pred` during training and `_reduce` in `infer.jl` at inference.
 
 # Arguments
 - `k::Int`: Number of ensemble members (default `32`).
@@ -138,6 +159,10 @@ function TabMConfig(; kwargs...)
 end
 
 function (config::TabMConfig)(; nfeats, outsize)
+    @assert config.k > 0 "k must be > 0, got $(config.k)"
+    @assert nfeats > 0 "nfeats must be > 0, got $nfeats"
+    @assert outsize > 0 "outsize must be > 0, got $outsize"
+
     k = config.k
     d_block = config.d_block
 
@@ -153,9 +178,10 @@ function (config::TabMConfig)(; nfeats, outsize)
         else
             error("Unsupported embedding type: $(config.embedding_type)")
         end
-        feature_layers = [emb_layer, WrappedFunction(_flatten_emb)]
+        feature_layers = [emb_layer, FlattenEmb()]
         d_in = nfeats * config.d_embedding
         d_features = fill(config.d_embedding, nfeats)
+        # Paper Appendix A.2: with embeddings, first R adapter uses N(0,1)
         effective_scaling_init = :normal
     else
         feature_layers = []
@@ -179,6 +205,7 @@ function (config::TabMConfig)(; nfeats, outsize)
         error("Unknown arch_type: $(config.arch_type)")
     end
 
+    # Head is always fully independent per member (LinearEnsemble)
     head = if config.MLE_tree_split && outsize == 2
         split_out = outsize ÷ 2
         Parallel(vcat,
@@ -188,6 +215,7 @@ function (config::TabMConfig)(; nfeats, outsize)
         Chain(LinearEnsemble(d_block, outsize, k))
     end
 
+    # Output: (outsize, k, batch) — averaging handled externally by reduce_pred
     return Chain(feature_layers..., EnsembleView(k), bb..., head)
 end
 
