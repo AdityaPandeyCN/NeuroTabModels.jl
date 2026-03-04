@@ -6,30 +6,11 @@ using Random
 using Lux
 using LuxCore
 using NNlib: softplus, sigmoid, sigmoid_fast, hardsigmoid, tanh_fast, hardtanh
+
 import ..Losses: get_loss_type, GaussianMLE
 import ..Models: Architecture
 
 include("model.jl")
-
-function _identity_act(x)
-    return x ./ sum(abs.(x), dims=2)
-end
-
-function _tanh_act(x)
-    x = tanh_fast.(x)
-    return x ./ sum(abs.(x), dims=2)
-end
-
-function _hardtanh_act(x)
-    x = hardtanh.(x)
-    return x ./ sum(abs.(x), dims=2)
-end
-
-const act_dict = Dict(
-    :identity => _identity_act,
-    :tanh => _tanh_act,
-    :hardtanh => _hardtanh_act,
-)
 
 struct StackedNeuroTree{L} <: LuxCore.AbstractLuxWrapperLayer{:chain}
     chain::L
@@ -139,5 +120,31 @@ function (config::NeuroTreeConfig)(; nfeats, outsize)
 
     return chain
 end
+
+function _identity_act(x)
+    return x ./ sum(abs.(x), dims=2)
+end
+function _tanh_act(x)
+    x = tanh_fast.(x)
+    return x ./ sum(abs.(x), dims=2)
+end
+function _hardtanh_act(x)
+    x = hardtanh.(x)
+    return x ./ sum(abs.(x), dims=2)
+end
+
+"""
+    act_dict = Dict(
+        :identity => _identity_act,
+        :tanh => _tanh_act,
+        :hardtanh => _hardtanh_act,
+    )
+Dictionary mapping features activation name to their function.
+"""
+const act_dict = Dict(
+    :identity => _identity_act,
+    :tanh => _tanh_act,
+    :hardtanh => _hardtanh_act,
+)
 
 end
