@@ -19,6 +19,7 @@ abstract type Tweedie <: LossType end
     reduce_pred(y)
 For 3D ensemble output `(D, K, B)`, averages over K → `(D, B)`.
 """
+reduce_pred(y::AbstractMatrix) = y
 reduce_pred(y::AbstractArray{T,3}) where {T} =
     dropdims(mean(y; dims=2); dims=2)
 
