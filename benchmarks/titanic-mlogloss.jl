@@ -34,25 +34,48 @@ deval = df[setdiff(1:nrow(df), train_indices), :]
 
 target_name = "y_cat"
 feature_names = setdiff(names(df), ["y_cat", "Survived"])
-
 eltype(dtrain[:, "y_cat"])
-config = NeuroTabClassifier(
-    nrounds=400,
+
+arch = NeuroTabModels.NeuroTreeConfig(;
+    tree_type=:binary,
+    proj_size=1,
+    init_scale=0.1,
     depth=4,
-    lr=3e-2,
+    ntrees=16,
+    stack_size=1,
+    hidden_size=1,
+    actA=:identity,
+    MLE_tree_split=false,
+)
+# arch = NeuroTabModels.TabMConfig(;
+#     arch_type=:tabm,
+#     k=32,
+#     d_block=64,
+#     n_blocks=3,
+#     dropout=0.1,
+#     bins=nothing,
+#     use_embeddings=false,
+#     embedding_type=:periodic,
+#     d_embedding=16,
+#     scaling_init=:random_signs,
+# )
+
+learner = NeuroTabClassifier(
+    arch;
+    nrounds=100,
+    early_stopping_rounds=5,
+    lr=1e-2,
+    device=:cpu
 )
 
-m = NeuroTabModels.fit(
-    config,
+@time m = NeuroTabModels.fit(
+    learner,
     dtrain;
     deval,
     target_name,
     feature_names,
-    metric=:mlogloss,
-    print_every_n=10,
-    early_stopping_rounds=3,
-    device=:cpu
-)
+    print_every_n=1,
+);
 
 p_train = m(dtrain)
 p_train_idx = [argmax(p) for p in eachrow(p_train)]
