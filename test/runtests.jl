@@ -1,4 +1,5 @@
 using Test
+using Lux
 using NeuroTabModels
 using Tables
 using DataFrames
@@ -10,5 +11,5 @@ using MLJBase
 using MLJTestInterface
 
 include("core.jl")
-include("tabm.jl")
+include("embedding.jl")
 include("MLJ.jl")
