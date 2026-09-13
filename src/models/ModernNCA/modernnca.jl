@@ -191,8 +191,9 @@ end
 
 Build `ModernNCALoader` and stash the raw corpus on `m.info[:nca_ref]`.
 `n_cand = floor(sample_rate × (N − batchsize))`. `sample_rate ≥ 1` uses the
-full complement; `batchsize == N` gives `n_cand = 0`. Only the Zygote backend
-is supported. Weights, offsets, and group padding are rejected.
+full complement; `batchsize == N` gives `n_cand = 0`. Training supports
+`:zygote` and `:reactant` (`:reactant` uses Enzyme through XLA). Weights,
+offsets, and group padding are rejected.
 
 # Arguments
 - `cfg`: ModernNCA config.
@@ -209,8 +210,8 @@ is supported. Weights, offsets, and group padding are rejected.
 function Models.train_dataloader(cfg::ModernNCAConfig, m::NeuroTabModel, ::Any, df;
     feature_names, target_name, loss, scalers, batchsize, dev, rng,
     weight_name=nothing, offset_name=nothing, group_name=nothing, backend=:zygote, kwargs...)
-    backend == :zygote ||
-        throw(ArgumentError("ModernNCA training supports only the Zygote backend (got $backend)"))
+    backend in (:zygote, :reactant) ||
+        throw(ArgumentError("ModernNCA training supports :zygote or :reactant (got $backend)"))
     for (val, name) in
         ((weight_name, :weight_name), (offset_name, :offset_name), (group_name, :group_name))
         isnothing(val) || throw(ArgumentError("ModernNCA does not support `$name`"))
@@ -253,8 +254,7 @@ end
     Models.infer_dataloader(m::ModernNCAModel, info, data, dev, ps, st)
 
 Attach a [`Corpus`](@ref) to every inference batch; it is encoded once, on the
-first batch. With `grouped=true`, preserve each batch's row mask. Reactant is
-rejected.
+first batch. With `grouped=true`, preserve each batch's row mask.
 
 # Arguments
 - `m`: ModernNCA model.
@@ -262,13 +262,13 @@ rejected.
 - `data`: default inference iterator.
 - `dev`: device.
 - `ps`, `st`: unused; encoding happens on the first forward.
-- `backend`: AD backend; `:reactant` throws.
+- `backend`: AD backend (`:zygote` or `:reactant`).
 - `grouped`: if `true`, keep each batch's row mask.
 """
 function Models.infer_dataloader(m::ModernNCAModel, info, data, dev, ::Any, ::Any;
     backend=:zygote, grouped::Bool=false)
-    backend == :reactant &&
-        throw(ArgumentError("ModernNCA does not support the Reactant backend"))
+    backend in (:zygote, :reactant, :enzyme) ||
+        throw(ArgumentError("ModernNCA inference supports :zygote or :reactant (got $backend)"))
     corpus = _corpus(m, info, dev)
     return grouped ?
            Iterators.map(d -> ((d[1], corpus), d[2]), data) :

@@ -19,7 +19,7 @@ end
 _same_shape(a::AbstractArray, b::AbstractArray) = size(a) == size(b)
 _same_shape(a::Tuple, b::Tuple) =
     length(a) == length(b) && all(_same_shape(ai, bi) for (ai, bi) in zip(a, b))
-_same_shape(_, _) = false
+_same_shape(a, b) = a === b
 
 function _infer_loop(::Val{:reactant}, chain, data, x0, dev, cdev, ps, st)
     compiled = @compile _forward_reduce(chain, dev(x0), ps, st)

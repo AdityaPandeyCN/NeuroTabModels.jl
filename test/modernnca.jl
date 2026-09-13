@@ -49,8 +49,11 @@ end
 
     model = arch(
         ; ins=4, outsize=1, loss=NeuroTabModels.Losses.MSE())
-    @test_throws ArgumentError NeuroTabModels.Models.infer_dataloader(
-        model, Dict(), (), identity, nothing, nothing; backend=:reactant)
+    data = NeuroTabModels.Models.infer_dataloader(
+        model, Dict(:nca_ref => (cx=randn(Float32, 4, 3), cy=randn(Float32, 3)),
+            :nrounds => 0), (randn(Float32, 4, 2),), identity, nothing, nothing;
+        backend=:reactant)
+    @test first(data) isa Tuple
 
     fitted = NeuroTabModels.Models.NeuroTabModel(
         NeuroTabModels.Losses.MSE(), model, Dict{Symbol,Any}())
@@ -116,4 +119,29 @@ end
     moved_x, retained_corpus = Lux.cpu_device()((x, corpus))
     @test moved_x == x
     @test retained_corpus === corpus
+end
+
+@testset "ModernNCA reactant" begin
+    rng = Xoshiro(123)
+    x = randn(rng, Float32, 40, 4)
+    df = DataFrame(x, :auto)
+    df.y = x[:, 1] .- 0.5f0 .* x[:, 2]
+    dtrain, deval = df[1:32, :], df[33:end, :]
+    features = names(df, r"x")
+
+    arch = NeuroTabModels.ModernNCAConfig(;
+        d_embedding=8, n_blocks=0, sample_rate=0.5, corpus_chunk_size=7)
+    learner = NeuroTabRegressor(arch;
+        embedding_config=NeuroTabModels.LinearEmbeddings(; d_embedding=2),
+        nrounds=3, early_stopping_rounds=3, batchsize=16,
+        scale_target=false, backend=:reactant, device=:cpu)
+    model = NeuroTabModels.fit(
+        learner, dtrain;
+        feature_names=features, target_name=:y, deval, verbosity=0)
+
+    prediction = model(deval; backend=:reactant, device=:cpu)
+    @test all(isfinite, Array(prediction))
+    @test length(prediction) == nrow(deval)
+    metrics = model.info[:logger][:metrics][:metric]
+    @test length(unique(metrics)) > 1
 end
