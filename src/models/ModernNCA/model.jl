@@ -265,7 +265,7 @@ function _attend_train(m::ModernNCAModel, zq, yq, cand_x, cand_y, ps, st; sts=no
     acc = _softmax_acc(zq, m.outsize)
     acc = _softmax_fold(acc, _scores(m, zq, zq; mask_self=true)[2], _train_targets(m, yq))
     nfull = size(cand_x, 3)
-    @trace track_numbers = false checkpointing = Periodic(max(nfull, 1)) for k in 1:nfull
+    @trace track_numbers = false checkpointing = false for k in 1:nfull
         sts === nothing || push!(sts, st)
         zc, st = _encode(m, cand_x[:, :, k], ps, st)
         acc = _softmax_fold(acc, last(_scores(m, zq, zc)), _train_targets(m, cand_y[:, k]))
