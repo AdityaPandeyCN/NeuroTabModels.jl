@@ -85,7 +85,7 @@ end
 Store targets per loss: a `(1, N)` row for regression/binary, class codes for
 multiclass (a `(K, N)` one-hot is only built per chunk).
 """
-_target_layout(::Union{MSE,MAE,LogLoss}, y) = reshape(y, 1, :)
+_target_layout(::Union{MSE,MAE,LogLoss}, y) = reshape(y, 1, length(y))
 _target_layout(::MLogLoss, y) = y
 
 """

@@ -126,7 +126,7 @@ _host_gather(::Any) = false
 _host_gather(::MLDataDevices.ReactantDevice) = true
 
 function _gather(l::ModernNCALoader, idx)
-    l.host && return l.dev(l.full_x[:, idx]), l.dev(l.full_y[idx])
+    l.host && return l.full_x[:, idx], l.full_y[idx]   # moved after reshaping
     idx = l.dev(idx)
     return l.full_x[:, idx], l.full_y[idx]
 end
@@ -156,10 +156,11 @@ function Base.iterate(l::ModernNCALoader, state=nothing)
         js = sample(l.rng, 1:(n - l.batchsize), l.n_cand; replace=false)
         cand_x, cand_y = _gather(l, perm[@. ifelse(js < start, js, js + l.batchsize)])
     else
-        cand_x, cand_y = l.dev(similar(l.full_x, size(l.full_x, 1), 0)), l.dev(similar(l.full_y, 0))
+        cand_x, cand_y = similar(l.full_x, size(l.full_x, 1), 0), similar(l.full_y, 0)
     end
     k = l.n_cand ÷ l.chunk
     cand_x, cand_y = reshape(cand_x, size(cand_x, 1), l.chunk, k), reshape(cand_y, l.chunk, k)
+    l.host && ((x, y, cand_x, cand_y) = l.dev((x, y, cand_x, cand_y)))
     return ((x, cand_x, cand_y, y), y), (perm, stop + 1)
 end
 
