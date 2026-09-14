@@ -12,6 +12,7 @@ using MLJTestInterface
 using Enzyme
 using Reactant
 using Zygote
+using Optimisers
 
 include("core.jl")
 include("embedding.jl")

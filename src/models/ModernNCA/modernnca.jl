@@ -7,7 +7,8 @@ import ..Models: Architecture, NeuroTabModel
 import ..Losses: LossType, MSE, MAE, LogLoss, MLogLoss
 
 using Lux
-using Lux: Functors
+using Lux: Functors, MLDataDevices
+using ReactantCore: @trace, within_compile, Periodic
 using LuxCore
 using NNlib: relu
 using ChainRulesCore: ChainRulesCore, RuleConfig, HasReverseMode, NoTangent, ZeroTangent,
@@ -94,23 +95,40 @@ Models.build_chain(cfg::ModernNCAConfig, embedding; ins, outsize, loss, kwargs..
 
 Training iterator yielding `((x, cand_x, cand_y, y), y)`. Query rows follow a
 shuffled epoch permutation; `n_cand` candidates are resampled every step from
-the complement of the query batch. The corpus lives on device.
+the complement of the query batch and delivered chunk-major: `cand_x`
+`(ins, chunk, n_cand ÷ chunk)`, `cand_y` `(chunk, n_cand ÷ chunk)`.
 
 # Arguments
-- `full_x`: feature matrix `(ins, N)` on device.
+- `full_x`: feature matrix `(ins, N)`.
 - `full_y`: encoded targets of length `N`.
 - `batchsize`: query rows per step.
-- `n_cand`: candidate rows sampled from the batch complement.
+- `n_cand`: candidate rows sampled from the batch complement; a multiple of `chunk`.
+- `chunk`: `corpus_chunk_size`.
 - `rng`: sampler for the epoch permutation and candidate indices.
-- `dev`: device for index tensors.
+- `dev`: device.
+- `host`: if `true`, `full_x`/`full_y` stay on the host, rows are gathered there
+  and each batch is moved with `dev`; otherwise the corpus is device-resident
+  and only the index vectors are moved.
 """
 struct ModernNCALoader{X,Y,R<:AbstractRNG,D}
     full_x::X
     full_y::Y
     batchsize::Int
     n_cand::Int
+    chunk::Int
     rng::R
     dev::D
+    host::Bool
+end
+
+# Reactant compiles every eager `getindex` on a device array, so gather on the host there.
+_host_gather(::Any) = false
+_host_gather(::MLDataDevices.ReactantDevice) = true
+
+function _gather(l::ModernNCALoader, idx)
+    l.host && return l.dev(l.full_x[:, idx]), l.dev(l.full_y[idx])
+    idx = l.dev(idx)
+    return l.full_x[:, idx], l.full_y[idx]
 end
 
 Base.length(l::ModernNCALoader) = fld(size(l.full_x, 2), l.batchsize)
@@ -132,16 +150,16 @@ function Base.iterate(l::ModernNCALoader, state=nothing)
     stop = start + l.batchsize - 1
     stop > n && return nothing
 
-    bidx = l.dev(perm[start:stop])
-    x, y = l.full_x[:, bidx], l.full_y[bidx]
+    x, y = _gather(l, perm[start:stop])
 
     if l.n_cand > 0
         js = sample(l.rng, 1:(n - l.batchsize), l.n_cand; replace=false)
-        cidx = l.dev(perm[@. ifelse(js < start, js, js + l.batchsize)])
-        cand_x, cand_y = l.full_x[:, cidx], l.full_y[cidx]
+        cand_x, cand_y = _gather(l, perm[@. ifelse(js < start, js, js + l.batchsize)])
     else
-        cand_x, cand_y = similar(l.full_x, size(l.full_x, 1), 0), similar(l.full_y, 0)
+        cand_x, cand_y = l.dev(similar(l.full_x, size(l.full_x, 1), 0)), l.dev(similar(l.full_y, 0))
     end
+    k = l.n_cand ÷ l.chunk
+    cand_x, cand_y = reshape(cand_x, size(cand_x, 1), l.chunk, k), reshape(cand_y, l.chunk, k)
     return ((x, cand_x, cand_y, y), y), (perm, stop + 1)
 end
 
@@ -190,10 +208,11 @@ end
     Models.train_dataloader(cfg::ModernNCAConfig, ...)
 
 Build `ModernNCALoader` and stash the raw corpus on `m.info[:nca_ref]`.
-`n_cand = floor(sample_rate × (N − batchsize))`. `sample_rate ≥ 1` uses the
-full complement; `batchsize == N` gives `n_cand = 0`. Training supports
-`:zygote` and `:reactant` (`:reactant` uses Enzyme through XLA). Weights,
-offsets, and group padding are rejected.
+`n_cand = floor(sample_rate × (N − batchsize))`, rounded down to a multiple of
+`corpus_chunk_size`. `sample_rate ≥ 1` uses the full complement; `batchsize == N`
+gives `n_cand = 0`. Backends: `:zygote` (memory-bounded backward via the
+`ChainRulesCore` rrule) and `:reactant` (the same chunk loop traced with one
+checkpoint per chunk). Weights, offsets, and group padding are rejected.
 
 # Arguments
 - `cfg`: ModernNCA config.
@@ -224,12 +243,15 @@ function Models.train_dataloader(cfg::ModernNCAConfig, m::NeuroTabModel, ::Any, 
     n_cand = pool == 0 ? 0 :
              cfg.sample_rate >= 1.0f0 ? pool :
              max(Int(floor(cfg.sample_rate * pool)), 1)
-    return ModernNCALoader(dev(cx), dev(cy), batchsize, n_cand, rng, dev)
+    n_cand = n_cand ÷ cfg.corpus_chunk_size * cfg.corpus_chunk_size
+    host = _host_gather(dev)
+    return ModernNCALoader(host ? cx : dev(cx), host ? cy : dev(cy), batchsize, n_cand,
+        cfg.corpus_chunk_size, rng, dev, host)
 end
 
 function _corpus(m::ModernNCAModel, info, dev)
-    ref = info[:nca_ref]
-    return Corpus(dev(ref.cx), _target_layout(m.loss, dev(ref.cy)), info)
+    ref, chunk = info[:nca_ref], m.cfg.corpus_chunk_size
+    return Corpus(dev(_stack(ref.cx, chunk)), dev(_stack(_target_layout(m.loss, ref.cy), chunk)), info)
 end
 
 """
@@ -253,23 +275,23 @@ end
 """
     Models.infer_dataloader(m::ModernNCAModel, info, data, dev, ps, st)
 
-Attach a [`Corpus`](@ref) to every inference batch; it is encoded once, on the
-first batch. With `grouped=true`, preserve each batch's row mask.
+Attach a [`Corpus`](@ref) to every inference batch, encoded once here with
+`ps`, `st`. With `grouped=true`, preserve each batch's row mask.
 
 # Arguments
 - `m`: ModernNCA model.
 - `info`: fit metadata; must contain `:nca_ref` and `:nrounds`.
 - `data`: default inference iterator.
 - `dev`: device.
-- `ps`, `st`: unused; encoding happens on the first forward.
-- `backend`: AD backend (`:zygote` or `:reactant`).
+- `ps`, `st`: parameters and (test-mode) states used to encode the corpus.
+- `backend`: AD backend; selects how the encoder is run (see `Models.compile_fn`).
 - `grouped`: if `true`, keep each batch's row mask.
 """
-function Models.infer_dataloader(m::ModernNCAModel, info, data, dev, ::Any, ::Any;
+function Models.infer_dataloader(m::ModernNCAModel, info, data, dev, ps, st;
     backend=:zygote, grouped::Bool=false)
-    backend in (:zygote, :reactant, :enzyme) ||
-        throw(ArgumentError("ModernNCA inference supports :zygote or :reactant (got $backend)"))
     corpus = _corpus(m, info, dev)
+    encode = Models.compile_fn(Val(backend), _encode_all, m, corpus.x, ps, st)
+    corpus.z, corpus.encoded_at = encode(m, corpus.x, ps, st), info[:nrounds]
     return grouped ?
            Iterators.map(d -> ((d[1], corpus), d[2]), data) :
            Iterators.map(x -> (x, corpus), data)

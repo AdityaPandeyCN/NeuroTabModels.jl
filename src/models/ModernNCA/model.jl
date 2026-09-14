@@ -38,10 +38,17 @@ function _build_model(cfg, embedding, ins, outsize, loss)
 end
 
 _temperature(m::ModernNCAModel) = max(m.cfg.temperature, m.cfg.eps)
-_nchunks(n::Int, chunk::Int) = n <= 0 ? 0 : cld(n, chunk)
-_chunk_range(n::Int, chunk::Int, c::Int) = ((c - 1) * chunk + 1):min(c * chunk, n)
-_cacheable_keys(z::AbstractArray) = isbitstype(eltype(z))
-_cacheable_keys(::Any) = false
+
+# Chunk-major layout. A key set `(rows, N)` is stored as `(rows, chunk, N ÷ chunk)` plus
+# a `(rows, N mod chunk)` tail, so a loop over chunks indexes with one scalar `k`. Plain
+# Julia on CPU/GPU; inside a Reactant `@trace for` the scalar is traced and the index
+# lowers to a dynamic slice, so the loop is a `stablehlo.while`, never unrolled.
+_stack(x::AbstractMatrix, chunk::Int) = (k = fld(size(x, 2), chunk);
+    (reshape(x[:, 1:(k * chunk)], size(x, 1), chunk, k), x[:, (k * chunk + 1):end]))
+_stack(y::AbstractVector, chunk::Int) = (k = fld(length(y), chunk);
+    (reshape(y[1:(k * chunk)], chunk, k), y[(k * chunk + 1):end]))
+_block(x::AbstractArray{<:Any,3}, k) = x[:, :, k]
+_block(y::AbstractMatrix, k) = y[:, k]
 
 """
     _pairwise_dist(q, k, ϵ) -> Matrix
@@ -82,16 +89,16 @@ _target_layout(::Union{MSE,MAE,LogLoss}, y) = reshape(y, 1, :)
 _target_layout(::MLogLoss, y) = y
 
 """
-    _target_block(loss, y, idx, outsize)
+    _targets(loss, y, outsize)
 
-`(outsize, length(idx))` target block for keys `idx`.
+`(outsize, num_keys)` target block for a key block `y` in loss layout.
 """
-_target_block(::Union{MSE,MAE,LogLoss}, y, idx, _) = y[:, idx]
-_target_block(::MLogLoss, y, idx, n::Int) =
+_targets(::Union{MSE,MAE,LogLoss}, y, _) = y
+_targets(::MLogLoss, y, n::Int) =
     ((k, c) -> ifelse(k == c, 1.0f0, 0.0f0)).(
-        reshape(UInt32(1):UInt32(n), :, 1), reshape(y[idx], 1, :))
+        reshape(UInt32(1):UInt32(n), :, 1), reshape(y, 1, :))
 
-_target_block(m::ModernNCAModel, y, idx) = _target_block(m.loss, y, idx, m.outsize)
+_targets(m::ModernNCAModel, y) = _targets(m.loss, y, m.outsize)
 
 """
     _finalize(loss, p)
@@ -154,32 +161,31 @@ function _encode(m::ModernNCAModel, x, ps, st)
 end
 
 """
-    _encode_all(m, x, ps, st) -> Matrix
+    _encode_all(m, (x3, xt), ps, st) -> (z3, zt)
 
-Encode `x` `(ins, N)` chunk by chunk into a preallocated `(d_embedding, N)`.
+Encode a chunk-major key set into `(d_embedding, chunk, nfull)` plus the tail.
 """
-function _encode_all(m::ModernNCAModel, x, ps, st)
-    n = size(x, 2)
-    chunk = m.cfg.corpus_chunk_size
-    z = similar(x, m.cfg.d_embedding, n)
-    for c in 1:_nchunks(n, chunk)
-        idx = _chunk_range(n, chunk, c)
-        z[:, idx] = first(_encode(m, x[:, idx], ps, st))
+function _encode_all(m::ModernNCAModel, (x3, xt), ps, st)
+    d = m.cfg.d_embedding
+    z3 = similar(x3, d, size(x3, 2), size(x3, 3))
+    @trace track_numbers = false for k in 1:size(x3, 3)
+        z3[:, :, k] = first(_encode(m, x3[:, :, k], ps, st))
     end
-    return z
+    zt = size(xt, 2) == 0 ? similar(xt, d, 0) : first(_encode(m, xt, ps, st))
+    return z3, zt
 end
 
 """
     Corpus(x, y, info)
 
-The full reference set used as keys outside training: raw features `x`
-`(ins, N)` on device, targets `y` in loss layout, and a cached encoding `z`.
-`z` is (re)computed when `info[:nrounds]` differs from `encoded_at`: during
-`fit`, parameters change only in `fit_iter!`, which bumps `nrounds`, so the
-eval callback re-encodes once per round; during `infer`, `nrounds` is fixed,
-so the first batch encodes and every later batch reuses it. Marked as a
-Functors leaf so device moves of `(x, corpus)` batches leave the resident
-corpus alone.
+The full reference set used as keys outside training, chunk-major (see
+[`_stack`](@ref)): features `x = (x3, xt)` on device, targets `y = (y3, yt)` in
+loss layout, and a cached encoding `z`. `z` is (re)computed when
+`info[:nrounds]` differs from `encoded_at`: during `fit`, parameters change
+only in `fit_iter!`, which bumps `nrounds`, so the eval callback re-encodes once
+per round; `infer_dataloader` encodes once up front. Inside a compiled graph
+the encoding is recomputed per call and never cached. Marked as a Functors leaf
+so device moves of `(x, corpus)` batches leave the resident corpus alone.
 """
 mutable struct Corpus{X,Y,I}
     x::X
@@ -195,15 +201,25 @@ Functors.@leaf Corpus
 
 function _keys(m::ModernNCAModel, corpus::Corpus, ps, st)
     round = corpus.info[:nrounds]
-    if _cacheable_keys(corpus.z) && corpus.encoded_at == round
-        return corpus.z
-    end
+    corpus.encoded_at == round && return corpus.z
     z = _encode_all(m, corpus.x, ps, st)
-    if _cacheable_keys(z)
-        corpus.z = z
-        corpus.encoded_at = round
-    end
+    within_compile() && return z
+    corpus.z, corpus.encoded_at = z, round
     return z
+end
+
+"""
+    _attend_keys(m, zq, (z3, zt), (y3, yt)) -> acc
+
+Fold the query encodings `zq` over an encoded key set, one chunk at a time.
+"""
+function _attend_keys(m::ModernNCAModel, zq, (z3, zt), (y3, yt))
+    acc = _softmax_acc(zq, m.outsize)
+    @trace track_numbers = false for k in 1:size(z3, 3)
+        acc = _softmax_fold(acc, last(_scores(m, zq, z3[:, :, k])), _targets(m, _block(y3, k)))
+    end
+    size(zt, 2) == 0 && return acc
+    return _softmax_fold(acc, last(_scores(m, zq, zt)), _targets(m, yt))
 end
 
 """
@@ -214,15 +230,7 @@ corpus, one chunk at a time.
 """
 function (m::ModernNCAModel)((x, corpus)::Tuple{Any,Corpus}, ps, st)
     zq, st = _encode(m, x, ps, st)
-    zk = _keys(m, corpus, ps, st)
-    acc = _softmax_acc(zq, m.outsize)
-    n, chunk = size(zk, 2), m.cfg.corpus_chunk_size
-    for c in 1:_nchunks(n, chunk)
-        idx = _chunk_range(n, chunk, c)
-        _, s = _scores(m, zq, zk[:, idx])
-        acc = _softmax_fold(acc, s, _target_block(m, corpus.y, idx))
-    end
-    p, _ = _softmax_result(acc)
+    p, _ = _softmax_result(_attend_keys(m, zq, _keys(m, corpus, ps, st), corpus.y))
     return _finalize(m.loss, p), st
 end
 
@@ -230,35 +238,37 @@ end
     (m::ModernNCAModel)((x, cand_x, cand_y, y), ps, st)
 
 Training forward: the query batch attends over `[itself (self-masked); candidates]`.
-Candidates are encoded and attended per chunk inside [`_attend_train`](@ref),
-which has a custom backward.
+`cand_x` is `(ins, chunk, nfull)` and `cand_y` `(chunk, nfull)` as produced by
+[`ModernNCALoader`](@ref). Candidates are encoded and attended per chunk inside
+[`_attend_train`](@ref), which has a custom backward.
 """
 function (m::ModernNCAModel)((x, cand_x, cand_y, y)::Tuple{Any,Any,Any,Any}, ps, st)
     zq, st = _encode(m, x, ps, st)
-    p, st, _ = _attend_train(m, zq, vec(y), cand_x, vec(cand_y), ps, st)
+    p, st, _ = _attend_train(m, zq, vec(y), cand_x, cand_y, ps, st)
     return _finalize(m.loss, p), st
 end
 
-_train_targets(m::ModernNCAModel, y, idx) =
-    _target_block(m, _target_layout(m.loss, y), idx)
+_train_targets(m::ModernNCAModel, y) = _targets(m, _target_layout(m.loss, y))
 
 """
-    _attend_train(m, zq, yq, cand_x, cand_y, ps, st) -> (p, st, lse)
+    _attend_train(m, zq, yq, cand_x, cand_y, ps, st; sts=nothing) -> (p, st, lse)
 
 Online-softmax attention for training. Keys are `zq` itself (diagonal masked)
 followed by `cand_x` encoded chunk by chunk with the current `ps` in train mode.
-Also returns the per-query log-sum-exp, which the Zygote rrule needs to
-recompute chunks. The primal is Enzyme/Reactant-traceable (no `Any` state bag).
+Also returns the per-query log-sum-exp. With `sts` a vector, the layer state
+before each chunk is pushed onto it (the rrule needs it to recompute chunks
+exactly). Under Reactant the chunk loop is traced with one checkpoint per
+chunk, so Enzyme recomputes a chunk in the backward instead of keeping every
+chunk's `(chunk, B)` scores: the same memory bound the rrule gives Zygote.
 """
-function _attend_train(m::ModernNCAModel, zq, yq, cand_x, cand_y, ps, st)
+function _attend_train(m::ModernNCAModel, zq, yq, cand_x, cand_y, ps, st; sts=nothing)
     acc = _softmax_acc(zq, m.outsize)
-    acc = _softmax_fold(acc, _scores(m, zq, zq; mask_self=true)[2],
-        _train_targets(m, yq, 1:size(zq, 2)))
-    n, chunk = size(cand_x, 2), m.cfg.corpus_chunk_size
-    for c in 1:_nchunks(n, chunk)
-        idx = _chunk_range(n, chunk, c)
-        zc, st = _encode(m, cand_x[:, idx], ps, st)
-        acc = _softmax_fold(acc, _scores(m, zq, zc)[2], _train_targets(m, cand_y, idx))
+    acc = _softmax_fold(acc, _scores(m, zq, zq; mask_self=true)[2], _train_targets(m, yq))
+    nfull = size(cand_x, 3)
+    @trace track_numbers = false checkpointing = Periodic(max(nfull, 1)) for k in 1:nfull
+        sts === nothing || push!(sts, st)
+        zc, st = _encode(m, cand_x[:, :, k], ps, st)
+        acc = _softmax_fold(acc, last(_scores(m, zq, zc)), _train_targets(m, cand_y[:, k]))
     end
     p, lse = _softmax_result(acc)
     return p, st, lse
@@ -285,25 +295,22 @@ candidate chunks are pulled back through the encoder one at a time.
 """
 function ChainRulesCore.rrule(cfg::RuleConfig{>:HasReverseMode}, ::typeof(_attend_train),
     m::ModernNCAModel, zq, yq, cand_x, cand_y, ps, st)
-    p, st_out, lse = _attend_train(m, zq, yq, cand_x, cand_y, ps, st)
+    sts = Any[]
+    p, st_out, lse = _attend_train(m, zq, yq, cand_x, cand_y, ps, st; sts)
     function attend_train_pullback(Δ)
         dp = unthunk(Δ[1])
         D = sum(p .* dp; dims=1)
 
         d, s = _scores(m, zq, zq; mask_self=true)
-        dS = exp.(s .- lse) .* (_train_targets(m, yq, 1:size(zq, 2))' * dp .- D)
+        dS = exp.(s .- lse) .* (_train_targets(m, yq)' * dp .- D)
         dzq = .+(_score_grads(m, zq, zq, d, dS)...)
 
         dps = ZeroTangent()
-        st_i = st
-        n, chunk = size(cand_x, 2), m.cfg.corpus_chunk_size
-        for c in 1:_nchunks(n, chunk)
-            idx = _chunk_range(n, chunk, c)
-            cx = cand_x[:, idx]
-            zc, enc_pb = rrule_via_ad(cfg, p_ -> first(_encode(m, cx, p_, st_i)), ps)
-            _, st_i = _encode(m, cx, ps, st_i)
+        for k in 1:size(cand_x, 3)
+            cx = cand_x[:, :, k]
+            zc, enc_pb = rrule_via_ad(cfg, p_ -> first(_encode(m, cx, p_, sts[k])), ps)
             d, s = _scores(m, zq, zc)
-            dS = exp.(s .- lse) .* (_train_targets(m, cand_y, idx)' * dp .- D)
+            dS = exp.(s .- lse) .* (_train_targets(m, cand_y[:, k])' * dp .- D)
             dq, dk = _score_grads(m, zq, zc, d, dS)
             dzq = dzq .+ dq
             dps = dps + enc_pb(dk)[2]

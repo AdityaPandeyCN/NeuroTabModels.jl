@@ -56,4 +56,6 @@ _single_train_step!(::Val{:reactant}, ad_backend, lux_loss, d, ts) =
 
 _compile_eval_step(::Val{:reactant}, step, args...) = @compile step(args...)
 
+NeuroTabModels.Models.compile_fn(::Val{:reactant}, f, args...) = @compile f(args...)
+
 end

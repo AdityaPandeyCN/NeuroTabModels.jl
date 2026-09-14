@@ -116,6 +116,14 @@ batch with extra inputs (e.g. a candidate corpus). Dispatched on
 infer_dataloader(::Any, ::Any, data, ::Any, ::Any, ::Any; kwargs...) = data
 
 """
+    compile_fn(::Val{backend}, f, args...) -> callable
+
+`f` compiled for `args` on backends that compile ahead of time (Reactant);
+`f` itself elsewhere.
+"""
+compile_fn(::Val, f, args...) = f
+
+"""
     eval_dataloader(chain, info, data, dev, ps, st)
 
 Per-architecture hook: return the per-batch iterator the eval `CallBack` should
