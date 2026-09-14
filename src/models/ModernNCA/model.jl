@@ -168,8 +168,10 @@ Encode a chunk-major key set into `(d_embedding, chunk, nfull)` plus the tail.
 function _encode_all(m::ModernNCAModel, (x3, xt), ps, st)
     d = m.cfg.d_embedding
     z3 = similar(x3, d, size(x3, 2), size(x3, 3))
-    @trace track_numbers = false for k in 1:size(x3, 3)
-        z3[:, :, k] = first(_encode(m, x3[:, :, k], ps, st))
+    if size(x3, 3) > 0
+        @trace track_numbers = false for k in 1:size(x3, 3)
+            z3[:, :, k] = first(_encode(m, x3[:, :, k], ps, st))
+        end
     end
     zt = size(xt, 2) == 0 ? similar(xt, d, 0) : first(_encode(m, xt, ps, st))
     return z3, zt
@@ -215,8 +217,10 @@ Fold the query encodings `zq` over an encoded key set, one chunk at a time.
 """
 function _attend_keys(m::ModernNCAModel, zq, (z3, zt), (y3, yt))
     acc = _softmax_acc(zq, m.outsize)
-    @trace track_numbers = false for k in 1:size(z3, 3)
-        acc = _softmax_fold(acc, last(_scores(m, zq, z3[:, :, k])), _targets(m, _block(y3, k)))
+    if size(z3, 3) > 0
+        @trace track_numbers = false for k in 1:size(z3, 3)
+            acc = _softmax_fold(acc, last(_scores(m, zq, z3[:, :, k])), _targets(m, _block(y3, k)))
+        end
     end
     size(zt, 2) == 0 && return acc
     return _softmax_fold(acc, last(_scores(m, zq, zt)), _targets(m, yt))
@@ -265,10 +269,12 @@ function _attend_train(m::ModernNCAModel, zq, yq, cand_x, cand_y, ps, st; sts=no
     acc = _softmax_acc(zq, m.outsize)
     acc = _softmax_fold(acc, _scores(m, zq, zq; mask_self=true)[2], _train_targets(m, yq))
     nfull = size(cand_x, 3)
-    @trace track_numbers = false checkpointing = Periodic(max(nfull, 1)) for k in 1:nfull
-        sts === nothing || push!(sts, st)
-        zc, st = _encode(m, cand_x[:, :, k], ps, st)
-        acc = _softmax_fold(acc, last(_scores(m, zq, zc)), _train_targets(m, cand_y[:, k]))
+    if nfull > 0
+        @trace track_numbers = false checkpointing = Periodic(nfull) for k in 1:nfull
+            sts === nothing || push!(sts, st)
+            zc, st = _encode(m, cand_x[:, :, k], ps, st)
+            acc = _softmax_fold(acc, last(_scores(m, zq, zc)), _train_targets(m, cand_y[:, k]))
+        end
     end
     p, lse = _softmax_result(acc)
     return p, st, lse
