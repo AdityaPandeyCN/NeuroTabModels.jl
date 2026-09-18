@@ -131,7 +131,7 @@ so the result equals a dense softmax while only this block is live.
 """
 function _softmax_fold(acc, s, yk)
     running_max, denominator, numerator = acc
-    block_max = maximum(s; dims=1)
+    block_max = Models.stopgrad(maximum(s; dims=1))
     w = exp.(s .- block_max)
     merged = max.(running_max, block_max)
     old_scale, new_scale = exp.(running_max .- merged), exp.(block_max .- merged)

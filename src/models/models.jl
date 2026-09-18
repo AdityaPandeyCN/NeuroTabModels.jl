@@ -124,6 +124,15 @@ infer_dataloader(::Any, ::Any, data, ::Any, ::Any, ::Any; kwargs...) = data
 compile_fn(::Val, f, args...) = f
 
 """
+    stopgrad(x)
+
+`x` with its gradient treated as zero. Identity on plain arrays; the Reactant
+extension lowers it to `Ops.ignore_derivatives` so Enzyme never differentiates
+through `x`.
+"""
+stopgrad(x) = x
+
+"""
     eval_dataloader(chain, info, data, dev, ps, st)
 
 Per-architecture hook: return the per-batch iterator the eval `CallBack` should

@@ -58,4 +58,6 @@ _compile_eval_step(::Val{:reactant}, step, args...) = @compile step(args...)
 
 NeuroTabModels.Models.compile_fn(::Val{:reactant}, f, args...) = @compile f(args...)
 
+NeuroTabModels.Models.stopgrad(x::Reactant.TracedRArray) = Reactant.Ops.ignore_derivatives(x)
+
 end
