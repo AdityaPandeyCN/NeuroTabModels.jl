@@ -132,6 +132,59 @@ through `x`.
 """
 stopgrad(x) = x
 
+# Loops over data, by kind. Chunked arrays keep their chunks along the last dimension.
+# Each kind is a plain loop here; a backend can take one over by adding a method for its
+# own array type (the Reactant extension lowers them to a single traced loop). The step
+# `f` is a plain function and everything it needs beyond the chunks is passed as `args`:
+# a backend that traces the loop turns `f`'s arguments into loop arguments, and a closure
+# over model data cannot be lowered that way.
+
+"""
+    chunkat(x, k)
+
+Chunk `k` of `x`: the slice at index `k` of the last dimension.
+"""
+chunkat(x::AbstractArray{<:Any,3}, k) = x[:, :, k]
+chunkat(x::AbstractMatrix, k) = x[:, k]
+chunksat(xs::Tuple, k) = map(x -> chunkat(x, k), xs)
+
+nchunks(x::AbstractArray) = size(x, ndims(x))
+
+"""
+    mapchunks!(f, out, xs::Tuple, args...) -> out
+
+Independent chunks: `out[:, :, k] = f(chunk k of each xs..., args...)`. Nothing is
+carried from one chunk to the next.
+"""
+function mapchunks!(f, out::AbstractArray{<:Any,3}, xs::Tuple, args...)
+    for k in 1:nchunks(out)
+        out[:, :, k] = f(chunksat(xs, k)..., args...)
+    end
+    return out
+end
+
+"""
+    foldchunks(f, state, xs::Tuple, args...; checkpoint=false) -> state
+
+Sequential chunks: `state = f(state, chunk k of each xs..., args...)`. `state` must
+keep its structure, array sizes and element types from one chunk to the next.
+`checkpoint=true` asks a backend that differentiates the loop itself to keep one
+checkpoint per chunk and recompute the rest in the backward.
+"""
+function foldchunks(f, state, xs::Tuple, args...; checkpoint::Bool=false)
+    for k in 1:nchunks(first(xs))
+        state = f(state, chunksat(xs, k)..., args...)
+    end
+    return state
+end
+
+"""
+    istraced(x) -> Bool
+
+Whether `x` is a placeholder a backend is tracing the model with, not real data.
+"""
+istraced(x) = false
+
 """
     eval_dataloader(chain, info, data, dev, ps, st)
 

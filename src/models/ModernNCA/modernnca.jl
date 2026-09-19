@@ -8,7 +8,6 @@ import ..Losses: LossType, MSE, MAE, LogLoss, MLogLoss
 
 using Lux
 using Lux: Functors, MLDataDevices
-using ReactantCore: @trace, within_compile, Periodic
 using LuxCore
 using NNlib: relu
 using ChainRulesCore: ChainRulesCore, RuleConfig, HasReverseMode, NoTangent, ZeroTangent,
