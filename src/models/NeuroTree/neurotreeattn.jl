@@ -80,7 +80,7 @@ the loss / eval / infer call sites pass `(x, w)` into the assembled `MaskedModel
   equal `hidden_size`). `1` is a single `NeuroTree` + flatten. Each extra
   layer is a residual `NeuroTree` of width `hidden_size`, with optional dropout.
 - `scaler::Bool`: Apply softplus scaling on tree logits (default `true`).
-- `init_scale::Float32`: Leaf weight init scale (default `0.1`).
+- `init_scale::Float32`: Gain on the leaf value init (default `1.0`); see `NeuroTree`.
 - `dropout::Float64`: Dropout after extra encoder layers only (`stack_size ≥ 2`).
   Not applied to the attention residual (those tokens are the `k` predictions).
 - `nheads::Int`: Ignored. Peer attention uses one head per ensemble channel.
@@ -116,7 +116,7 @@ function NeuroTreeAttnConfig(; kwargs...)
         :hidden_size => 64,
         :stack_size => 1,
         :scaler => true,
-        :init_scale => 0.1,
+        :init_scale => 1.0,
         :dropout => 0.0,
         :nheads => 4,
         :n_attn_layers => 1,

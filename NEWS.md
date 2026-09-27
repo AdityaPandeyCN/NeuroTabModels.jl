@@ -30,6 +30,8 @@ Dropped from the embeddings export list: `NLinear`, `Periodic`, `PiecewiseLinear
 
 **Raw predictions.** With `proj=false`, `MLogLoss` and `GaussianMLE` return `(nobs, K)`, the same layout as `proj=true`, instead of `(K, nobs)`.
 
+**NeuroTree leaf init.** Leaf values start with std `init_scale · √(trees · leaves)`, so each NeuroTree output starts near unit variance and `init_scale` is now a gain (default `1.0`, was `0.1`). An explicit `init_scale` from v0.4 gives much larger leaves than before; drop it to use the default.
+
 ## Added
 
 - Architectures: `ModernNCAConfig`, `MLPAttnConfig`, `NeuroTreeAttnConfig`.

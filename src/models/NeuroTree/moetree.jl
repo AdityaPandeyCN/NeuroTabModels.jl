@@ -46,7 +46,7 @@ those weights.
 - `k::Int`: Number of experts (default `4`). Router `outs` and expert ensemble
   width. Must be ≥ 1.
 - `scaler::Bool`: Apply softplus scaling on tree logits (default `true`).
-- `init_scale::Float32`: Leaf weight init scale (default `0.1`).
+- `init_scale::Float32`: Gain on the leaf value init (default `1.0`); see `NeuroTree`.
 - `MLE_tree_split::Bool`: Split output head for Gaussian MLE (default `false`).
 """
 struct MOETreeConfig <: Architecture
@@ -68,7 +68,7 @@ function MOETreeConfig(; kwargs...)
         :ntrees => 32,
         :k => 4,
         :scaler => true,
-        :init_scale => 0.1,
+        :init_scale => 1.0,
         :MLE_tree_split => false,
     )
 
