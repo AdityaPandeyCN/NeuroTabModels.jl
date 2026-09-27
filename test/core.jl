@@ -1,4 +1,14 @@
-@testset "Core - data iterators" begin end
+@testset "Core - data iterators" begin
+    df = DataFrame(x=rand(Float32, 8), y=rand(Float32, 8), off=rand(Float32, 8))
+    for name in ("off", :off)
+        dl = NeuroTabModels.Data.get_df_loader_train(
+            df; feature_names=["x"], target_name=:y, offset_name=name, batchsize=8, shuffle=false
+        )
+        x, y, w, offset = first(dl)
+        @test w == ones(Float32, 8)
+        @test vec(offset) ≈ df.off
+    end
+end
 
 @testset "Core - internals test" begin
     learner = NeuroTabRegressor(;

@@ -72,12 +72,19 @@ function get_df_loader_train(
     end
 
     y = reshape(y, 1, :)
-    w = isnothing(weight_name) ? nothing : Float32.(df[!, weight_name])
+    # batches carrying an offset are laid out as (x, y, w, offset), so unit weights stand in when none are given
+    w = if !isnothing(weight_name)
+        Float32.(df[!, weight_name])
+    elseif !isnothing(offset_name)
+        ones(Float32, size(y, 2))
+    else
+        nothing
+    end
 
     offset = if isnothing(offset_name)
         nothing
     else
-        if isa(offset_name, String)
+        if offset_name isa Union{String,Symbol}
             Float32.(df[!, offset_name])
         else
             Matrix{Float32}(Matrix{Float32}(df[!, offset_name])')
