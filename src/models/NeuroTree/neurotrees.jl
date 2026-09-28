@@ -20,8 +20,9 @@ end
 function StackedNeuroTree(
     (ins, outs)::Pair{<:Integer,<:Integer}; hidden_size::Int, stack_size::Int, k::Int=1, tree_kwargs...
 )
+    head_kwargs = (; tree_kwargs..., init_scale=0)  # final layer starts at zero: neutral predictions
     if stack_size == 1
-        return StackedNeuroTree(NeuroTree(ins => outs; k, tree_kwargs...))
+        return StackedNeuroTree(NeuroTree(ins => outs; k, head_kwargs...))
     end
 
     layers = Any[NeuroTree(ins => 1; k=hidden_size, tree_kwargs...), FlattenLayer()]
@@ -30,7 +31,7 @@ function StackedNeuroTree(
             layers, SkipConnection(Chain(NeuroTree(hidden_size => 1; k=hidden_size, tree_kwargs...), FlattenLayer()), +)
         )
     end
-    push!(layers, NeuroTree(hidden_size => outs; k, tree_kwargs...))
+    push!(layers, NeuroTree(hidden_size => outs; k, head_kwargs...))
 
     return StackedNeuroTree(Chain(layers...))
 end
@@ -49,7 +50,7 @@ Configuration for differentiable neuro-tree ensembles.
 - `hidden_size::Int`: Hidden dimension for stacked trees (default `1`).
 - `stack_size::Int`: Number of stacked tree layers (default `1`).
 - `scaler::Bool`: Apply softplus scaling on tree logits (default `true`).
-- `init_scale::Float32`: Gain on the leaf value init (default `1.0`); see `NeuroTree`.
+- `init_scale::Float32`: Gain on the leaf value init (default `1.0`); see `NeuroTree`. The final tree layer always starts at zero leaves (neutral predictions), so this only affects hidden layers when `stack_size ≥ 2`.
 - `MLE_tree_split::Bool`: Split output head for Gaussian MLE (default `false`).
 """
 struct NeuroTreeConfig <: Architecture
