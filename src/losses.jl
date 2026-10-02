@@ -116,9 +116,11 @@ function _pointwise(::Tweedie, pred, y)
     2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) .- y .* ep .^ (1 - rho) / (1 - rho) .+ ep .^ (2 - rho) / (2 - rho))
 end
 
+# Rows `1:T` are μ and rows `T+1:2T` are log-σ, one of each per target.
 function _pointwise(::GaussianMLE, pred, y)
-    μ = pred[1:1, :, :]
-    σ = pred[2:2, :, :]
+    T = size(pred, 1) ÷ 2
+    μ = pred[1:T, :, :]
+    σ = pred[(T + 1):(2T), :, :]
     σ .+ (y .- μ) .^ 2 ./ (2 .* max.(eltype(σ)(2e-7), exp.(2 .* σ)))
 end
 

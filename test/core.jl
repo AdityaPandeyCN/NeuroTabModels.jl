@@ -628,6 +628,54 @@ end
     @test p_scaled[:, 2] ≈ p[:, 2] .* 2
 end
 
+@testset "Output shape contract" begin
+    nfeats, outsize, B = 5, 3, 7
+    x = randn(Float32, nfeats, B)
+    M = NeuroTabModels.Models
+    for arch in (
+        M.NeuroTreeConfig(), M.MLPConfig(), M.ResNetConfig(), M.TabMConfig(), M.MOETreeConfig(),
+        M.MLPAttnConfig(), M.NeuroTreeAttnConfig(),
+    )
+        chain = arch(; ins=nfeats, outsize)
+        ps, st = Lux.setup(Random.Xoshiro(1), chain)
+        y, _ = chain(x, ps, Lux.testmode(st))
+        @test ndims(y) in (2, 3) && size(y, 1) == outsize && size(y, ndims(y)) == B
+    end
+end
+
+@testset "Multiple targets" begin
+    Random.seed!(123)
+    n = 500
+    X = randn(Float32, n, 4)
+    df = DataFrame(X, :auto)
+    df.y1, df.y2, df.y3 = X[:, 1], X[:, 2] .- X[:, 3], sin.(X[:, 4])
+    df.b1, df.b2 = Float32.(X[:, 1] .> 0), Float32.(X[:, 2] .> 0)
+    df.c1, df.c2 = round.(exp.(0.5f0 .* X[:, 1])), round.(exp.(-0.5f0 .* X[:, 2]))
+    df.offset = fill(0.1f0, n)
+    feature_names = ["x1", "x2", "x3", "x4"]
+    arch = NeuroTabModels.TabMConfig(; k=4, d_block=32, n_blocks=1, dropout=0.0)
+    fit_mt(loss, target_name; kw...) = NeuroTabModels.fit(
+        NeuroTabRegressor(arch; loss, nrounds=3, lr=1e-2, batchsize=128), df;
+        feature_names, target_name, deval=df, kw...,
+    )
+
+    @test size(fit_mt(:mse, ["y1", "y2", "y3"])(df)) == (n, 3)
+
+    p = fit_mt(:gaussian_mle, ["y1", "y2"])(df)
+    @test size(p) == (n, 4)
+    @test all(>(0), p[:, 3:4])
+
+    @test all(x -> 0 < x < 1, fit_mt(:logloss, ["b1", "b2"])(df))
+
+    # Log link with one offset shared by both targets.
+    @test all(>(0), fit_mt(:tweedie, ["c1", "c2"]; offset_name="offset")(df))
+
+    df.cls = categorical(rand(["a", "b"], n))
+    clf = NeuroTabClassifier(arch; nrounds=1)
+    @test_throws "Multiple targets" NeuroTabModels.fit(clf, df; feature_names, target_name=["cls", "cls"])
+    @test_throws "Multiple targets" fit_mt(:pearson, ["y1", "y2"])
+end
+
 @testset "Pearson loss and metric" begin
     L = NeuroTabModels.Losses
     M = NeuroTabModels.Metrics

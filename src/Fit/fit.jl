@@ -41,9 +41,10 @@ function init(
     offset_name=nothing,
     group_name=nothing,
 )
-    feature_names, target_name = Symbol.(feature_names), Symbol(target_name)
+    feature_names, target_name = Symbol.(feature_names), Symbol.(target_name)
+    target_name isa AbstractVector && length(target_name) == 1 && (target_name = only(target_name))
     weight_name = isnothing(weight_name) ? nothing : Symbol(weight_name)
-    offset_name = isnothing(offset_name) ? nothing : Symbol(offset_name)
+    offset_name = isnothing(offset_name) ? nothing : Symbol.(offset_name)
     group_name = isnothing(group_name) ? nothing : Symbol(group_name)
 
     dev = _get_device(config.backend, config.device; gpuID=config.gpuID)
@@ -51,7 +52,13 @@ function init(
     nfeats = length(feature_names)
     loss = LossType(config.loss)
 
-    outsize = noutputs(loss)
+    T = target_name isa AbstractVector ? length(target_name) : 1
+    if T > 1
+        loss isa Union{MLogLoss,Pearson} && error("Multiple targets are not supported with `loss=:$(config.loss)`.")
+        isnothing(group_name) || error("Multiple targets are not supported with `group_name`.")
+        config.arch isa ModernNCAConfig && error("Multiple targets are not supported with `ModernNCAConfig`.")
+    end
+    outsize = noutputs(loss) * T
     target_levels = nothing
     target_isordered = false
 
@@ -64,7 +71,8 @@ function init(
 
     scalers = nothing
     if hasproperty(config, :scale_target) && config.scale_target && scales_target(loss)
-        scalers = (mu=mean(df[!, target_name]), sigma=std(df[!, target_name]))
+        y = df[!, target_name]
+        scalers = T == 1 ? (mu=mean(y), sigma=std(y)) : (mu=mean.(eachcol(y)), sigma=std.(eachcol(y)))
     end
 
     # one rng drives both parameter init and batch order, so `seed` makes a fit reproducible;
@@ -142,7 +150,10 @@ Training function of NeuroTabModels' internal API.
 # Keyword arguments
 
 - `feature_names`: Required. A `Vector{Symbol}` or `Vector{String}` of the feature names to use.
-- `target_name`: Required. A `Symbol` or `String` indicating the name of the target variable.
+- `target_name`: Required. A `Symbol` or `String` naming the target, or a vector of names for several
+  targets. With `T` targets the model has `T` times the outputs, and predictions are an `(nobs, T)`
+  matrix (`(nobs, 2T)` for `:gaussian_mle`: the `T` means, then the `T` standard deviations).
+  Multiple targets are not supported with `:mlogloss`, `:pearson`, `group_name` or `ModernNCAConfig`.
 - `weight_name=nothing`: Optional. A `Symbol` or `String` indicating the sample weights column.
 - `offset_name=nothing`: Optional. A `Symbol` or `String` indicating the offset column.
 - `group_name=nothing`: Optional. Column used to group training data in the dataloader.

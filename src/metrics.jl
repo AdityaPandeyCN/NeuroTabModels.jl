@@ -21,19 +21,26 @@ function percent_rank(x::AbstractVector)
     return result
 end
 
+# Lay `a` out as one column per observation of the `(T, B)` prediction `p`: targets keep their
+# rows, while per-row weights and a shared offset become a `(1, B)` row broadcast over targets.
+_obs(a, p) = reshape(a, :, size(p, 2))
+
 """
     mse(m, x, y; agg=mean)
     mse(m, x, y, w; agg=mean)
     mse(m, x, y, w, offset; agg=mean)
 """
 function mse(m, x, y; agg=mean)
-    return agg((vec(m(x)) .- vec(y)) .^ 2)
+    p = m(x)
+    return agg((p .- _obs(y, p)) .^ 2)
 end
 function mse(m, x, y, w; agg=mean)
-    return agg((vec(m(x)) .- vec(y)) .^ 2 .* vec(w))
+    p = m(x)
+    return agg((p .- _obs(y, p)) .^ 2 .* _obs(w, p))
 end
 function mse(m, x, y, w, offset; agg=mean)
-    return agg((vec(m(x)) .+ vec(offset) .- vec(y)) .^ 2 .* vec(w))
+    p = m(x)
+    return agg((p .+ _obs(offset, p) .- _obs(y, p)) .^ 2 .* _obs(w, p))
 end
 
 """
@@ -42,13 +49,16 @@ end
     mae(m, x, y, w, offset; agg=mean)
 """
 function mae(m, x, y; agg=mean)
-    return agg(abs.(vec(m(x)) .- vec(y)))
+    p = m(x)
+    return agg(abs.(p .- _obs(y, p)))
 end
 function mae(m, x, y, w; agg=mean)
-    return agg(abs.(vec(m(x)) .- vec(y)) .* vec(w))
+    p = m(x)
+    return agg(abs.(p .- _obs(y, p)) .* _obs(w, p))
 end
 function mae(m, x, y, w, offset; agg=mean)
-    return agg(abs.(vec(m(x)) .+ vec(offset) .- vec(y)) .* vec(w))
+    p = m(x)
+    return agg(abs.(p .+ _obs(offset, p) .- _obs(y, p)) .* _obs(w, p))
 end
 
 """
@@ -57,19 +67,20 @@ end
     logloss(m, x, y, w, offset; agg=mean)
 """
 function logloss(m, x, y; agg=mean)
-    p = vec(m(x))
-    y = vec(y)
+    p = m(x)
+    y = _obs(y, p)
     return agg((1 .- y) .* p .- logsigmoid.(p))
 end
 function logloss(m, x, y, w; agg=mean)
-    p = vec(m(x))
-    y = vec(y)
-    return agg(((1 .- y) .* p .- logsigmoid.(p)) .* vec(w))
+    p = m(x)
+    y = _obs(y, p)
+    return agg(((1 .- y) .* p .- logsigmoid.(p)) .* _obs(w, p))
 end
 function logloss(m, x, y, w, offset; agg=mean)
-    p = vec(m(x)) .+ vec(offset)
-    y = vec(y)
-    return agg(((1 .- y) .* p .- logsigmoid.(p)) .* vec(w))
+    p = m(x)
+    p = p .+ _obs(offset, p)
+    y = _obs(y, p)
+    return agg(((1 .- y) .* p .- logsigmoid.(p)) .* _obs(w, p))
 end
 
 """
@@ -79,17 +90,17 @@ end
 """
 function tweedie(m, x, y; agg=mean)
     rho = eltype(x)(1.5)
-    p = exp.(vec(m(x)))
-    y = vec(y)
+    p = exp.(m(x))
+    y = _obs(y, p)
     return agg(
         2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) .- y .* p .^ (1 - rho) / (1 - rho) .+ p .^ (2 - rho) / (2 - rho))
     )
 end
 function tweedie(m, x, y, w; agg=mean)
     rho = eltype(x)(1.5)
-    p = exp.(vec(m(x)))
-    y = vec(y)
-    w = vec(w)
+    p = exp.(m(x))
+    y = _obs(y, p)
+    w = _obs(w, p)
     return agg(
         w .* 2 .*
         (y .^ (2 - rho) / (1 - rho) / (2 - rho) .- y .* p .^ (1 - rho) / (1 - rho) .+ p .^ (2 - rho) / (2 - rho)),
@@ -97,9 +108,10 @@ function tweedie(m, x, y, w; agg=mean)
 end
 function tweedie(m, x, y, w, offset; agg=mean)
     rho = eltype(x)(1.5)
-    p = exp.(vec(m(x)) .+ vec(offset))
-    y = vec(y)
-    w = vec(w)
+    p = m(x)
+    p = exp.(p .+ _obs(offset, p))
+    y = _obs(y, p)
+    w = _obs(w, p)
     return agg(
         w .* 2 .*
         (y .^ (2 - rho) / (1 - rho) / (2 - rho) .- y .* p .^ (1 - rho) / (1 - rho) .+ p .^ (2 - rho) / (2 - rho)),
@@ -142,19 +154,23 @@ _gaussian_mle_elt(μ, σ, y) = -σ - (y - μ)^2 / (2 * max(oftype(σ, 2e-7), exp
 
 _gaussian_mle_elt(μ, σ, y, w) = (-σ - (y - μ)^2 / (2 * max(oftype(σ, 2e-7), exp(2 * σ)))) * w
 
+# Rows `1:T` of the prediction are μ and rows `T+1:2T` are log-σ.
 function gaussian_mle(m, x, y; agg=mean)
     p = m(x)
-    metric = agg(_gaussian_mle_elt.(view(p, 1, :), view(p, 2, :), vec(y)))
+    T = size(p, 1) ÷ 2
+    metric = agg(_gaussian_mle_elt.(view(p, 1:T, :), view(p, (T + 1):(2T), :), _obs(y, p)))
     return metric
 end
 function gaussian_mle(m, x, y, w; agg=mean)
     p = m(x)
-    metric = agg(_gaussian_mle_elt.(view(p, 1, :), view(p, 2, :), vec(y), vec(w)))
+    T = size(p, 1) ÷ 2
+    metric = agg(_gaussian_mle_elt.(view(p, 1:T, :), view(p, (T + 1):(2T), :), _obs(y, p), _obs(w, p)))
     return metric
 end
 function gaussian_mle(m, x, y, w, offset; agg=mean)
     p = m(x) .+ offset
-    metric = agg(_gaussian_mle_elt.(view(p, 1, :), view(p, 2, :), vec(y), vec(w)))
+    T = size(p, 1) ÷ 2
+    metric = agg(_gaussian_mle_elt.(view(p, 1:T, :), view(p, (T + 1):(2T), :), _obs(y, p), _obs(w, p)))
     return metric
 end
 
