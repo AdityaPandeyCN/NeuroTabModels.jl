@@ -749,14 +749,21 @@ end
     @test MT.pearson(_ -> pg, pg, yr, wr) ≈ MT.pearson(_ -> pg[[1, 3], :], pg, yr, wr)
     @test size(fit_mt(:pearson, ["y1", "y2"])(df)) == (n, 2)
 
+    # Grouped data: each group's target is `(T, 1, bs)`, zero on pads, and fit and eval run.
+    dg = DataFrame(x1=Float32[1, 2, 3, 4, 5], y1=Float32[1, 2, 3, 4, 5], y2=Float32[5, 4, 3, 2, 1], g=[1, 1, 1, 2, 2])
+    _, yg, _ = first(NeuroTabModels.Data.get_df_loader_train(
+        groupby(dg, :g; sort=true); feature_names=[:x1], target_name=[:y1, :y2], batchsize=0, shuffle=false
+    ))
+    @test size(yg) == (2, 1, 3) && yg[:, 1, :] == Float32[1 2 3; 5 4 3]
+    df.g = repeat(1:10; inner=n ÷ 10)
+    @test size(fit_mt(:mse, ["y1", "y2"]; group_name="g")(df)) == (n, 2)
+    @test size(fit_mt(:pearson, ["y1", "y2"]; eval_group_name="g")(df)) == (n, 2)
+
     df.cls = categorical(rand(["a", "b"], n))
     clf = NeuroTabClassifier(arch; nrounds=1)
     @test_throws "Multiple targets" NeuroTabModels.fit(clf, df; feature_names, target_name=["cls", "cls"])
     # A one-name vector is a single target, in the eval set too.
     @test size(NeuroTabModels.fit(clf, df; feature_names, target_name=["cls"], deval=df)(df)) == (n, 2)
-    df.g = repeat(1:10; inner=n ÷ 10)
-    @test_throws "`group_name`" fit_mt(:mse, ["y1", "y2"]; group_name="g")
-    @test_throws "`eval_group_name`" fit_mt(:mse, ["y1", "y2"]; eval_group_name="g")
     @test_throws "3 columns but the model has 2 outputs" fit_mt(:tweedie, ["c1", "c2"]; offset_name=["o1", "o2", "offset"])
     @test_throws "2 columns but the model has 4 outputs" fit_mt(:gaussian_mle, ["y1", "y2"]; offset_name=["o1", "o2"])
     nca = NeuroTabRegressor(NeuroTabModels.ModernNCAConfig(); nrounds=1)
