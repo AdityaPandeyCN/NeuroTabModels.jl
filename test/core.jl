@@ -735,6 +735,20 @@ end
         @test num / den ≈ mean((p2 .- y2) .^ 2)
     end
 
+    # Pearson, as in EvoTrees: each target correlates on its own and the loss and the eval
+    # metric take the mean over targets. With two outputs per target the metric reads the μ rows.
+    MT = NeuroTabModels.Metrics
+    P = L.Pearson()
+    pr, yr, wr = randn(Float32, 2, 1, 16), randn(Float32, 2, 16), rand(Float32, 16) .+ 0.5f0
+    ploss(t) = first(P(idm, nothing, nothing, (pr[t, :, :], yr[t:t, :], wr)))
+    @test first(P(idm, nothing, nothing, (pr, yr, wr))) ≈ (ploss(1) + ploss(2)) / 2
+    pp = dropdims(pr; dims=2)
+    peval(p, y) = /(CB._build_eval_step(idm, MT.pearson, (p, y, wr), nothing, nothing; reactant=false)(p, y, wr, nothing, nothing)...)
+    @test peval(pp, yr) ≈ (peval(pp[1:1, :], yr[1:1, :]) + peval(pp[2:2, :], yr[2:2, :])) / 2
+    pg = randn(Float32, 4, 16)
+    @test MT.pearson(_ -> pg, pg, yr, wr) ≈ MT.pearson(_ -> pg[[1, 3], :], pg, yr, wr)
+    @test size(fit_mt(:pearson, ["y1", "y2"])(df)) == (n, 2)
+
     df.cls = categorical(rand(["a", "b"], n))
     clf = NeuroTabClassifier(arch; nrounds=1)
     @test_throws "Multiple targets" NeuroTabModels.fit(clf, df; feature_names, target_name=["cls", "cls"])
@@ -747,7 +761,6 @@ end
     @test_throws "2 columns but the model has 4 outputs" fit_mt(:gaussian_mle, ["y1", "y2"]; offset_name=["o1", "o2"])
     nca = NeuroTabRegressor(NeuroTabModels.ModernNCAConfig(); nrounds=1)
     @test_throws "`ModernNCAConfig`" NeuroTabModels.fit(nca, df; feature_names, target_name=["y1", "y2"])
-    @test_throws "Multiple targets" fit_mt(:pearson, ["y1", "y2"])
     @test_throws "duplicate" fit_mt(:mse, ["y1", "y1"])
     @test_throws "`x1` is also listed in `feature_names`" fit_mt(:mse, ["y1", "x1"])
     df.flat = fill(1.0f0, n)

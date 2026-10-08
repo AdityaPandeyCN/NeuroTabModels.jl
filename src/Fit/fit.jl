@@ -55,7 +55,7 @@ function init(
     T = target_name isa AbstractVector ? length(target_name) : 1
     if T > 1
         # as in EvoTrees, which supports several targets for every loss but `:mlogloss`
-        loss isa Union{MLogLoss,Pearson} && error("Multiple targets are not supported with `loss=:$(config.loss)`.")
+        loss isa MLogLoss && error("Multiple targets are not supported with `loss=:mlogloss`.")
         isnothing(group_name) || error("Multiple targets are not supported with `group_name`.")
         config.arch isa ModernNCAConfig && error("Multiple targets are not supported with `ModernNCAConfig`.")
     end
@@ -168,7 +168,7 @@ Training function of NeuroTabModels' internal API.
 - `target_name`: Required. A `Symbol` or `String` naming the target, or a vector of names for several
   targets. With `T` targets the model has `T` times the outputs, and predictions are an `(nobs, T)`
   matrix (`(nobs, 2T)` for `:gaussian_mle`: μ₁, σ₁, μ₂, σ₂, … as in EvoTrees).
-  Multiple targets are not supported with `:mlogloss` (as in EvoTrees), `:pearson`, `group_name` or `ModernNCAConfig`.
+  Multiple targets are not supported with `:mlogloss` (as in EvoTrees), `group_name` or `ModernNCAConfig`.
 - `weight_name=nothing`: Optional. A `Symbol` or `String` indicating the sample weights column.
   With `group_name`, weights must be positive and finite, and they act within each group: each step
   is normalised by its group's own weight sum.

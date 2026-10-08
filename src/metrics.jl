@@ -173,20 +173,31 @@ end
 
 Uses the first output (`μ` when `gaussian_mle` returns `size(p, 1) == 2`).
 A flat group (constant predictions or target, or a single row) scores 0 and keeps its weight.
+With several targets each correlates on its own and the metric is their mean, as in EvoTrees.
 """
-_corr_pred(p) = vec(view(p, 1, :))
+# Target `t` reads output row `t`, or its μ in row `2t - 1` when there are two outputs per
+# target, as with `gaussian_mle`. As in EvoTrees, the layout is read off the shapes.
+function _corr_pred(p, y, t=1)
+    stride = size(p, 1) == 2 * size(y, 1) ? 2 : 1
+    return vec(view(p, stride * (t - 1) + 1, :))
+end
 
+function _pearson_mean(p, y, w)
+    T = size(y, 1)
+    T == 1 && return _pearson_value(_corr_pred(p, y), y, w)
+    return sum(t -> _pearson_value(_corr_pred(p, y, t), selectdim(y, 1, t), w), 1:T) / T
+end
+
+# Scaled by the eval step's denominator, which counts every target, so the logged value is the mean.
 function pearson(m, x, y; agg=mean)
-    p = _corr_pred(m(x))
-    return _pearson_value(p, y, one.(p)) * length(y)
+    p = m(x)
+    return _pearson_mean(p, y, one.(_corr_pred(p, y))) * length(y)
 end
 function pearson(m, x, y, w; agg=mean)
-    p = _corr_pred(m(x))
-    return _pearson_value(p, y, w) * sum(w)
+    return _pearson_mean(m(x), y, w) * sum(w) * size(y, 1)
 end
 function pearson(m, x, y, w, offset; agg=mean)
-    p = _corr_pred(m(x) .+ _offset_2d(offset))
-    return _pearson_value(p, y, w) * sum(w)
+    return _pearson_mean(m(x) .+ _offset_2d(offset), y, w) * sum(w) * size(y, 1)
 end
 
 """
