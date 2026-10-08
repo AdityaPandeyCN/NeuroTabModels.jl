@@ -32,7 +32,7 @@ MSE()(model, ps, st, data)
 
 ## Multiple Targets
 
-With `T` targets (a vector `target_name`), each loss's output rows repeat per target: the prediction is `(T·outsize, K, B)` and the target `(T, B)`. For `:gaussian_mle`, the rows interleave per target as in EvoTrees, μ₁, log-σ₁, μ₂, log-σ₂, …, so `fit` returns `(nobs, 2T)` with the means in odd columns and the standard deviations in even ones.
+With `T` targets (a vector `target_name`), each loss's output rows repeat per target: the prediction is `(T·outsize, K, B)` and the target `(T, B)`. For `:gaussian_mle`, the rows interleave per target as in EvoTrees, μ₁, log-σ₁, μ₂, log-σ₂, …, so `fit` returns `(nobs, 2T)` with the means in odd columns and the standard deviations in even ones. An offset is either one column added to every output or one column per output in that same order.
 
 As in EvoTrees, `:mlogloss` does not support several targets.
 

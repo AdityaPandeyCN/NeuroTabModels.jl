@@ -693,6 +693,30 @@ end
     # Log link with one offset shared by both targets.
     @test all(>(0), fit_mt(:tweedie, ["c1", "c2"]; offset_name="offset")(df))
 
+    # One offset per target: `e_t = exp(o_t)` is fully explained by its own offset, so predictions,
+    # which leave the offset out, stay near 1 only if each target is paired with its own column.
+    df.o1, df.o2 = fill(1.5f0, n), fill(-1.5f0, n)
+    df.e1, df.e2 = exp.(df.o1), exp.(df.o2)
+    p = NeuroTabModels.fit(
+        NeuroTabRegressor(arch; loss=:tweedie, nrounds=5, lr=1e-2, batchsize=128), df;
+        feature_names, target_name=["e1", "e2"], offset_name=["o1", "o2"],
+    )(df)
+    @test all(x -> 0.8 < x < 1.25, p)
+
+    # One offset per output for Gaussian, in the order of the predictions; the loss and the
+    # eval metric add each column to its own row, a log-σ row included.
+    MT = NeuroTabModels.Metrics
+    idg = (x, ps, st) -> (x, st)
+    pg, og = randn(Float32, 4, 1, 8), randn(Float32, 4, 8)
+    yg, wg = randn(Float32, 2, 8), rand(Float32, 8) .+ 0.5f0
+    @test first(G(idg, nothing, nothing, (pg, yg, wg, og))) ≈
+          first(G(idg, nothing, nothing, (pg .+ reshape(og, 4, 1, 8), yg, wg)))
+    pg2 = dropdims(pg; dims=2)
+    @test MT.gaussian_mle(_ -> pg2, pg2, yg, wg, og) ≈ MT.gaussian_mle(_ -> pg2 .+ og, pg2, yg, wg)
+    df.z1, df.z2 = zeros(Float32, n), zeros(Float32, n)
+    @test size(fit_mt(:gaussian_mle, ["y1", "y2"]; offset_name=["o1", "z1", "o2", "z2"])(df)) == (n, 4)
+    @test size(fit_mt(:gaussian_mle, ["y1", "y2"]; offset_name="offset")(df)) == (n, 4)
+
     # A 2D-output architecture with weights and an eval set.
     df.w = rand(Float32, n) .+ 0.5f0
     mlp = NeuroTabRegressor(NeuroTabModels.MLPConfig(); nrounds=2, batchsize=128)
@@ -719,6 +743,8 @@ end
     df.g = repeat(1:10; inner=n ÷ 10)
     @test_throws "`group_name`" fit_mt(:mse, ["y1", "y2"]; group_name="g")
     @test_throws "`eval_group_name`" fit_mt(:mse, ["y1", "y2"]; eval_group_name="g")
+    @test_throws "3 columns but the model has 2 outputs" fit_mt(:tweedie, ["c1", "c2"]; offset_name=["o1", "o2", "offset"])
+    @test_throws "2 columns but the model has 4 outputs" fit_mt(:gaussian_mle, ["y1", "y2"]; offset_name=["o1", "o2"])
     nca = NeuroTabRegressor(NeuroTabModels.ModernNCAConfig(); nrounds=1)
     @test_throws "`ModernNCAConfig`" NeuroTabModels.fit(nca, df; feature_names, target_name=["y1", "y2"])
     @test_throws "Multiple targets" fit_mt(:pearson, ["y1", "y2"])

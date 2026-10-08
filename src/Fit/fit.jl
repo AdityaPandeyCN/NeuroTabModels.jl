@@ -44,7 +44,7 @@ function init(
     feature_names, target_name = Symbol.(feature_names), Symbol.(target_name)
     target_name isa AbstractVector && length(target_name) == 1 && (target_name = only(target_name))
     weight_name = isnothing(weight_name) ? nothing : Symbol(weight_name)
-    offset_name = isnothing(offset_name) ? nothing : Symbol(offset_name)
+    offset_name = isnothing(offset_name) ? nothing : Symbol.(offset_name)
     group_name = isnothing(group_name) ? nothing : Symbol(group_name)
 
     dev = _get_device(config.backend, config.device; gpuID=config.gpuID)
@@ -75,6 +75,9 @@ function init(
         target_isordered = isordered(df[!, target_name])
         outsize = length(target_levels)
     end
+    # as in EvoTrees, one offset column for every output, or one column per output
+    offset_name isa AbstractVector && length(offset_name) ∉ (1, outsize) &&
+        error("`offset_name` has $(length(offset_name)) columns but the model has $outsize outputs; give one column, or one per output.")
 
     scalers = nothing
     if hasproperty(config, :scale_target) && config.scale_target && scales_target(loss)
@@ -169,7 +172,9 @@ Training function of NeuroTabModels' internal API.
 - `weight_name=nothing`: Optional. A `Symbol` or `String` indicating the sample weights column.
   With `group_name`, weights must be positive and finite, and they act within each group: each step
   is normalised by its group's own weight sum.
-- `offset_name=nothing`: Optional. A `Symbol` or `String` indicating the offset column.
+- `offset_name=nothing`: Optional. A `Symbol` or `String` indicating the offset column, added to every
+  model output, or a vector of names giving one offset column per output, in the order of the
+  predictions (for `:gaussian_mle`, μ₁, σ₁, μ₂, σ₂, … on the log-σ scale).
 - `group_name=nothing`: Optional. Column used to group training data in the dataloader.
 - `eval_group_name=group_name`: Optional. Column used to group evaluation data when computing metrics.
   Defaults to `group_name`. Set independently to compute groupby eval metrics while training on the
