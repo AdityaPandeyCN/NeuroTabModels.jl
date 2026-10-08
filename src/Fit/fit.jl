@@ -41,7 +41,8 @@ function init(
     offset_name=nothing,
     group_name=nothing,
 )
-    feature_names, target_name = Symbol.(feature_names), Symbol(target_name)
+    feature_names, target_name = Symbol.(feature_names), Symbol.(target_name)
+    target_name isa AbstractVector && length(target_name) == 1 && (target_name = only(target_name))
     weight_name = isnothing(weight_name) ? nothing : Symbol(weight_name)
     offset_name = isnothing(offset_name) ? nothing : Symbol(offset_name)
     group_name = isnothing(group_name) ? nothing : Symbol(group_name)
@@ -51,10 +52,20 @@ function init(
     nfeats = length(feature_names)
     loss = LossType(config.loss)
 
-    target_name in feature_names && error("Target `$target_name` is also listed in `feature_names`.")
-    any(v -> ismissing(v) || (v isa AbstractFloat && isnan(v)), df[!, target_name]) &&
-        error("Target `$target_name` has missing or NaN values.")
-    outsize = noutputs(loss)
+    T = target_name isa AbstractVector ? length(target_name) : 1
+    if T > 1
+        # as in EvoTrees, which supports several targets for every loss but `:mlogloss`
+        loss isa Union{MLogLoss,Pearson} && error("Multiple targets are not supported with `loss=:$(config.loss)`.")
+        isnothing(group_name) || error("Multiple targets are not supported with `group_name`.")
+        config.arch isa ModernNCAConfig && error("Multiple targets are not supported with `ModernNCAConfig`.")
+    end
+    allunique(vcat(target_name)) || error("`target_name` has duplicate names.")
+    for t in vcat(target_name)
+        t in feature_names && error("Target `$t` is also listed in `feature_names`.")
+        any(v -> ismissing(v) || (v isa AbstractFloat && isnan(v)), df[!, t]) &&
+            error("Target `$t` has missing or NaN values.")
+    end
+    outsize = noutputs(loss) * T
     target_levels = nothing
     target_isordered = false
 
@@ -67,9 +78,13 @@ function init(
 
     scalers = nothing
     if hasproperty(config, :scale_target) && config.scale_target && scales_target(loss)
-        scalers = (mu=mean(df[!, target_name]), sigma=std(df[!, target_name]))
-        iszero(scalers.sigma) &&
-            error("Target `$target_name` is constant and cannot be scaled; drop it or set `scale_target=false`.")
+        # `Matrix` promotes mixed Int / Float32 / Float64 columns to one element type
+        y = T == 1 ? df[!, target_name] : Matrix(df[!, target_name])
+        scalers = T == 1 ? (mu=mean(y), sigma=std(y)) : (mu=vec(mean(y; dims=1)), sigma=vec(std(y; dims=1)))
+        # a scalar `sigma` iterates once, so one and several targets share this check
+        for (t, s) in zip(vcat(target_name), scalers.sigma)
+            iszero(s) && error("Target `$t` is constant and cannot be scaled; drop it or set `scale_target=false`.")
+        end
     end
 
     # one rng drives both parameter init and batch order, so `seed` makes a fit reproducible;
@@ -147,7 +162,10 @@ Training function of NeuroTabModels' internal API.
 # Keyword arguments
 
 - `feature_names`: Required. A `Vector{Symbol}` or `Vector{String}` of the feature names to use.
-- `target_name`: Required. A `Symbol` or `String` indicating the name of the target variable.
+- `target_name`: Required. A `Symbol` or `String` naming the target, or a vector of names for several
+  targets. With `T` targets the model has `T` times the outputs, and predictions are an `(nobs, T)`
+  matrix (`(nobs, 2T)` for `:gaussian_mle`: μ₁, σ₁, μ₂, σ₂, … as in EvoTrees).
+  Multiple targets are not supported with `:mlogloss` (as in EvoTrees), `:pearson`, `group_name` or `ModernNCAConfig`.
 - `weight_name=nothing`: Optional. A `Symbol` or `String` indicating the sample weights column.
   With `group_name`, weights must be positive and finite, and they act within each group: each step
   is normalised by its group's own weight sum.
@@ -177,6 +195,10 @@ function fit(
 )
     m, cache = init(config, dtrain; feature_names, target_name, weight_name, offset_name, group_name)
     m.info[:eval_group_name] = isnothing(eval_group_name) ? nothing : Symbol(eval_group_name)
+    # init keeps a vector only for several targets; a one-name vector is stored as a Symbol
+    target_name = m.info[:target_name]
+    target_name isa AbstractVector && !isnothing(eval_group_name) &&
+        error("Multiple targets are not supported with `eval_group_name`.")
 
     logger = nothing
     if !isnothing(deval)

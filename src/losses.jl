@@ -87,7 +87,7 @@ _apply_offset(pred, ::Nothing) = pred
 _apply_offset(pred, offset) = pred .+ _reshape_3d(offset)
 
 _reduce(loss) = mean(loss)
-_reduce(loss, w) = sum(mean(loss; dims=2) .* w) / sum(w)
+_reduce(loss, w) = sum(mean(loss; dims=(1, 2)) .* w) / sum(w)
 
 _aggregate(loss, pred, y, ::Nothing) = _reduce(_pointwise(loss, pred, y))
 _aggregate(loss, pred, y, w) = _reduce(_pointwise(loss, pred, y), _reshape_3d(w))
@@ -116,9 +116,10 @@ function _pointwise(::Tweedie, pred, y)
     2 .* (y .^ (2 - rho) / (1 - rho) / (2 - rho) .- y .* ep .^ (1 - rho) / (1 - rho) .+ ep .^ (2 - rho) / (2 - rho))
 end
 
+# Rows interleave per target, as in EvoTrees: odd rows are μ and even rows log-σ.
 function _pointwise(::GaussianMLE, pred, y)
-    μ = pred[1:1, :, :]
-    σ = pred[2:2, :, :]
+    μ = pred[1:2:end, :, :]
+    σ = pred[2:2:end, :, :]
     σ .+ (y .- μ) .^ 2 ./ (2 .* max.(eltype(σ)(2e-7), exp.(2 .* σ)))
 end
 
