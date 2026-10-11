@@ -70,7 +70,13 @@ for (name, arch) in archs
 
     metrics = vcat(
         test_metrics(spec.task, p, dtest[!, target_name]),
-        ["best_iter" => m.info[:logger][:best_iter], "train_time" => train_time, "predict_time" => predict_time],
+        [
+            "best_iter" => m.info[:logger][:best_iter],
+            "train_time" => train_time,
+            # early stopping sets the number of rounds, so speed is compared per round
+            "time_per_round" => train_time / max(m.info[:logger][:nrounds], 1),
+            "predict_time" => predict_time,
+        ],
     )
     for (metric, value) in metrics
         push!(rows, (; info..., device, dataset, model=name, metric, value=Float64(value)))
@@ -81,7 +87,7 @@ record_results(rows)
 
 ## Results
 
-Test-set scores, and training and prediction times in seconds.
+Test-set scores, and training (in total and per round) and prediction times in seconds.
 
 ```{julia}
 #| echo: false
