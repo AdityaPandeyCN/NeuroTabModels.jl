@@ -13,7 +13,7 @@ import MLUtils: DataLoader
 
 export infer, reduce_pred
 
-reduce_pred(pred::AbstractMatrix) = pred
+# Average the `k` axis of an `(outsize, k, batch)` prediction.
 reduce_pred(pred::AbstractArray{T,3}) where {T} = dropdims(mean(pred; dims=2); dims=2)
 
 """
