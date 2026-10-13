@@ -39,5 +39,6 @@ Dropped from the embeddings export list: `NLinear`, `Periodic`, `PiecewiseLinear
 - Architectures: `ModernNCAConfig`, `MLPAttnConfig`, `NeuroTreeAttnConfig`.
 - Embeddings: `TemporalEmbeddings`, `LayerNormEmbeddings`, `IdentityEmbedding`, `EmbeddingLayer`.
 - Loss / metric: Pearson (`:pearson`), Poisson (`:poisson`).
+- Multiple targets: pass a vector `target_name` to `fit` and predictions come back as an `(nobs, T)` matrix (`(nobs, 2T)` for `:gaussian_mle`, interleaved μ₁, σ₁, μ₂, σ₂, …). Not supported with `:mlogloss` or `ModernNCAConfig`. `offset_name` also accepts a vector of columns, one offset per model output.
 - Mask-aware grouped training and inference (padding masks, `MaskedModel`); grouped predictions are returned in the caller’s row order.
 - Attention residual layers and grouped dense building blocks used by the new architectures.
