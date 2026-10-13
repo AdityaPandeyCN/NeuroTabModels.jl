@@ -63,7 +63,7 @@ function _resnet_trunk(ins::Int, hsize::Int, outsize::Int, act, stack_size::Int,
     for _ in 1:stack_size
         push!(layers, _res_block(hsize, act, dropout))
     end
-    push!(layers, Dense(hsize => outsize))
+    push!(layers, Dense(hsize => outsize), ReshapeLayer((outsize, 1)))
     return Chain(layers...)
 end
 

@@ -55,7 +55,7 @@ function _mlp_trunk(ins::Int, hsize::Int, outsize::Int, act, stack_size::Int, dr
         push!(layers, Dense(hsize => hsize))
         dropout > 0 && push!(layers, Dropout(dropout))
     end
-    push!(layers, Dense(hsize => outsize))
+    push!(layers, Dense(hsize => outsize), ReshapeLayer((outsize, 1)))
     return Chain(layers...)
 end
 
