@@ -61,7 +61,7 @@ _reshape_3d(x::AbstractArray{T,3}) where {T} = x
 
 function _forward(model, ps, st, x)
     pred, st_ = model(x, ps, st)
-    return _reshape_3d(pred), st_
+    return pred::AbstractArray{<:Any,3}, st_
 end
 
 """

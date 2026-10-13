@@ -4,7 +4,7 @@ Losses are concrete callable types, following the [Lux loss API](https://lux.csa
 
 ## Prediction Shape
 
-All losses expect 3D predictions: `(outsize, K, batch)` where `K` is the ensemble size. 2D outputs are reshaped to `(outsize, 1, batch)` automatically.
+All losses expect 3D predictions: `(outsize, K, batch)` where `K` is the ensemble size. Other shapes are rejected.
 
 `reduce_pred` averages over `K` on raw predictions before any transformation.
 
