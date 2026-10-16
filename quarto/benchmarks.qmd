@@ -8,6 +8,7 @@ format:
 
 ```{julia}
 #| echo: false
+#| output: false
 include(joinpath(@__DIR__, "benchmarks", "benchmarks.jl"))
 results = read_results()
 ```
@@ -20,6 +21,7 @@ To add a run, render the reports with `julia --project=quarto quarto/run.jl`. Ad
 
 ```{julia}
 #| echo: false
+#| output: false
 # relative change from `prev` to `cur`, signed so that positive is worse
 function worse_by(metric, cur, prev)
     prev == 0 && return 0.0
