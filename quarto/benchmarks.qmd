@@ -68,6 +68,7 @@ end
 for dataset in sort(unique(results.dataset))
     println("## ", dataset, "\n")
     println("[Report](benchmark-", dataset, ".md). ", DATASETS[dataset].description, "\n")
-    println(markdown_table(compare(results, dataset)), "\n")
+    df = compare(results, dataset)
+    println(pretty_table(String, df; backend=:markdown, column_labels=names(df)), "\n")
 end
 ```

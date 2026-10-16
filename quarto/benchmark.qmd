@@ -93,7 +93,7 @@ Test-set scores, and training (in total and per round) and prediction times in s
 #| echo: false
 #| output: asis
 wide = unstack(rows, :model, :metric, :value)
-println(markdown_table(wide))
+println(pretty_table(String, wide; backend=:markdown, column_labels=names(wide)))
 ```
 
 ```{julia}

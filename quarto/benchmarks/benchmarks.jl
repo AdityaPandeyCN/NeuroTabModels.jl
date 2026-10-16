@@ -6,13 +6,10 @@ using DataFrames
 using CategoricalArrays
 using CSV
 using Dates
-using MLDatasets
 using OpenML
+using PrettyTables
 using Random
 using Statistics: mean, std, median
-
-# MLDatasets asks before its first download
-ENV["DATADEPS_ALWAYS_ACCEPT"] = "true"
 
 const RESULTS_FILE = joinpath(@__DIR__, "results.csv")
 
@@ -23,13 +20,20 @@ Add a dataset by adding an entry to `DATASETS`; `run.jl` renders one report per 
 one changed prediction moves a metric by several percent, so it serves as a demo only.
 ===========================================================================================#
 
+function _boston()
+    df = DataFrame(OpenML.load(531))
+    df.CHAS, df.RAD = parse.(Float64, String.(df.CHAS)), parse.(Float64, String.(df.RAD))
+    return df
+end
+
 function _titanic()
-    df = MLDatasets.Titanic().dataframe
-    df.Sex = Float64.(df.Sex .== "male")
-    df.Age_ismissing = Float64.(ismissing.(df.Age))
-    df.Age = coalesce.(df.Age, median(skipmissing(df.Age)))
-    df.Survived = Float64.(df.Survived)
-    return select(df, Not([:PassengerId, :Name, :Embarked, :Cabin, :Ticket]))
+    df = DataFrame(OpenML.load(40945))
+    df.sex = Float64.(df.sex .== "male")
+    df.age_ismissing = Float64.(ismissing.(df.age))
+    df.age = coalesce.(df.age, median(skipmissing(df.age)))
+    df.fare = coalesce.(df.fare, median(skipmissing(df.fare)))
+    df.survived = parse.(Float64, String.(df.survived))
+    return select(df, Not([:name, :embarked, :ticket, :cabin, :boat, :body, Symbol("home.dest")]))
 end
 
 function _higgs()
@@ -40,19 +44,19 @@ end
 
 const DATASETS = Dict(
     "boston" => (;
-        description="Boston housing: median home value of 506 Boston census tracts.",
+        description="Boston housing (OpenML 531): median home value of 506 Boston census tracts.",
         check=false, task=:regression, target="MEDV", nrounds=400, batchsize=64,
-        load=() -> MLDatasets.BostonHousing().dataframe,
+        load=_boston,
     ),
     "titanic" => (;
-        description="Titanic: survival of 891 passengers.",
-        check=false, task=:binary, target="Survived", nrounds=400, batchsize=64,
+        description="Titanic (OpenML 40945): survival of 1,309 passengers.",
+        check=false, task=:binary, target="survived", nrounds=400, batchsize=64,
         load=_titanic,
     ),
     "iris" => (;
-        description="Iris: species of 150 flowers, 3 classes.",
+        description="Iris (OpenML 61): species of 150 flowers, 3 classes.",
         check=false, task=:multiclass, target="class", nrounds=400, batchsize=16,
-        load=() -> transform(MLDatasets.Iris().dataframe, :class => categorical => :class),
+        load=() -> DataFrame(OpenML.load(61)),
     ),
     "california" => (;
         description="California housing (OpenML 44977): median house value of 20,640 block groups.",
@@ -159,18 +163,3 @@ function record_results(rows::DataFrame)
 end
 
 read_results() = CSV.read(RESULTS_FILE, DataFrame; types=Dict(:commit => String, :version => String))
-
-"""
-    markdown_table(df; digits=4)
-
-`df` as a GitHub markdown table, for cells with `output: asis`.
-"""
-function markdown_table(df::DataFrame; digits=4)
-    fmt(x::AbstractFloat) = isinteger(x) ? string(Int(x)) : string(round(x; sigdigits=digits))
-    fmt(x) = string(x)
-    lines = ["| " * join(names(df), " | ") * " |", "|" * repeat(" --- |", ncol(df))]
-    for r in eachrow(df)
-        push!(lines, "| " * join(fmt.(values(r)), " | ") * " |")
-    end
-    return join(lines, "\n")
-end
