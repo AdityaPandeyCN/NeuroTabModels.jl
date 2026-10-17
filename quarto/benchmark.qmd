@@ -10,6 +10,7 @@ params:
 
 ```{julia}
 #| echo: false
+#| output: false
 include(joinpath(@__DIR__, "benchmarks", "benchmarks.jl"))
 using NeuroTabModels.Models
 using CairoMakie
