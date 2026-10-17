@@ -3,19 +3,24 @@ engine: julia
 format:
   gfm:
     variant: -raw_html
+execute:
+  # a worker per render, so no dataset holds on to GPU memory while the next one trains
+  daemon: false
 params:
   dataset: "boston"
   device: "cpu"
+  backend: "zygote"
 ---
 
 ```{julia}
 #| echo: false
 #| output: false
-include(joinpath(@__DIR__, "benchmarks", "benchmarks.jl"))
+include(joinpath(@__DIR__, "benchmarks.jl"))
 using NeuroTabModels.Models
 using CairoMakie
-# `device: gpu` needs CUDA and cuDNN in the quarto environment
-device == "gpu" && @eval using CUDA, cuDNN
+# the backend is a package extension; `device: gpu` with Zygote needs CUDA and cuDNN in the quarto environment
+backend == "reactant" ? @eval(using Reactant) : @eval(using Zygote)
+device == "gpu" && backend == "zygote" && @eval using CUDA, cuDNN
 ```
 
 ```{julia}
@@ -24,7 +29,7 @@ device == "gpu" && @eval using CUDA, cuDNN
 println("# Benchmark: ", dataset, "\n\n", DATASETS[dataset].description)
 ```
 
-This report fits each architecture on the same data with the same settings, then scores it on a held-out test set. Running it adds its results to `quarto/benchmarks/results.csv`, which feeds the [benchmark summary](benchmarks.md).
+This report fits each architecture on the same data with the same settings, then scores it on a held-out test set. Running it adds its results to `quarto/benchmarks/results.csv`, which feeds the [benchmark summary](bench-summary.md).
 
 ## Data
 
@@ -48,7 +53,7 @@ archs = [
     "NeuroTree" => NeuroTreeConfig(; depth=4, ntrees=32),
     "TabM" => TabMConfig(; k=8, d_block=128, n_blocks=2),
 ]
-settings = (; nrounds=spec.nrounds, batchsize=spec.batchsize, early_stopping_rounds=20, device=Symbol(device))
+settings = (; nrounds=spec.nrounds, batchsize=spec.batchsize, early_stopping_rounds=20, device, backend)
 ```
 
 ## Training
@@ -80,7 +85,7 @@ for (name, arch) in archs
         ],
     )
     for (metric, value) in metrics
-        push!(rows, (; info..., device, dataset, model=name, metric, value=Float64(value)))
+        push!(rows, (; info..., device, backend, dataset, model=name, metric, value=Float64(value)))
     end
 end
 record_results(rows)
@@ -100,7 +105,7 @@ println(pretty_table(String, wide; backend=:markdown, column_labels=names(wide))
 ```{julia}
 #| echo: false
 #| output: asis
-println("Run on NeuroTabModels ", info.version, " (", info.commit, "), Julia ", info.julia, ", ", device, ", ", info.date, ".")
+println("Run on NeuroTabModels ", info.version, " (", info.commit, "), Julia ", info.julia, ", ", device, ", ", backend, ", ", info.date, ".")
 ```
 
 ## Learning curves

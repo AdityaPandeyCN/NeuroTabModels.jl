@@ -3,10 +3,10 @@ using Documenter
 using DocumenterVitepress
 using NeuroTabModels
 
-# one page per rendered benchmark report, see quarto/run.jl
+# one page per rendered benchmark report, see quarto/benchmarks/run.jl
 benchmark_pages = [
-    titlecase(f[11:(end - 3)]) => "quarto/$f" for
-    f in sort(readdir(joinpath(@__DIR__, "src", "quarto"))) if startswith(f, "benchmark-") && endswith(f, ".md")
+    titlecase(f[7:(end - 3)]) => "quarto/$f" for f in sort(readdir(joinpath(@__DIR__, "src", "quarto"))) if
+    startswith(f, "bench-") && endswith(f, ".md") && f != "bench-summary.md"
 ]
 
 pages = [
@@ -29,8 +29,8 @@ pages = [
         "Classification - IRIS" => "tutorials/classification-iris.md",
     ],
 ]
-isfile(joinpath(@__DIR__, "src", "quarto", "benchmarks.md")) &&
-    push!(pages, "Benchmarks" => ["Summary" => "quarto/benchmarks.md", benchmark_pages...])
+isfile(joinpath(@__DIR__, "src", "quarto", "bench-summary.md")) &&
+    push!(pages, "Benchmarks" => ["Summary" => "quarto/bench-summary.md", benchmark_pages...])
 
 makedocs(;
     sitename="NeuroTabModels",

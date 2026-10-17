@@ -1,7 +1,6 @@
-# Datasets, metrics and the results file shared by `benchmark.qmd` and `benchmarks.qmd`.
+# Datasets, metrics and the results file shared by `bench-template.qmd` and `bench-summary.qmd`.
 
 using NeuroTabModels
-using Zygote  # the default `backend=:zygote` is a package extension
 using DataFrames
 using CategoricalArrays
 using CSV
@@ -58,12 +57,12 @@ const DATASETS = Dict(
     ),
     "california" => (;
         description="California housing (OpenML 44977): median house value of 20,640 block groups.",
-        task=:regression, target="medianHouseValue", nrounds=200, batchsize=512,
+        task=:regression, target="medianHouseValue", nrounds=200, batchsize=1024,
         load=() -> DataFrame(OpenML.load(44977)),
     ),
     "higgs" => (;
         description="Higgs (OpenML 23512): signal vs background for 98k collision events.",
-        task=:binary, target="class", nrounds=50, batchsize=1024,
+        task=:binary, target="class", nrounds=100, batchsize=1024,
         load=_higgs,
     ),
 )
@@ -148,13 +147,13 @@ end
 """
     record_results(rows)
 
-Write a run's rows to `RESULTS_FILE`, replacing earlier rows for the same commit, device and
-dataset.
+Write a run's rows to `RESULTS_FILE`, replacing earlier rows for the same commit, device,
+backend and dataset.
 """
 function record_results(rows::DataFrame)
     old = isfile(RESULTS_FILE) ? read_results() : similar(rows, 0)
     r = first(rows)
-    keep = .!((old.commit .== r.commit) .& (old.device .== r.device) .& (old.dataset .== r.dataset))
+    keep = .!((old.commit .== r.commit) .& (old.device .== r.device) .& (old.backend .== r.backend) .& (old.dataset .== r.dataset))
     CSV.write(RESULTS_FILE, vcat(old[keep, :], rows))
 end
 
