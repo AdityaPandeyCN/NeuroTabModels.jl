@@ -16,8 +16,6 @@ const RESULTS_FILE = joinpath(@__DIR__, "results.csv")
 #===========================================================================================
 Datasets: each loader returns a DataFrame of numeric features plus the target column.
 Add a dataset by adding an entry to `DATASETS`; `run.jl` renders one report per entry.
-`check=false` keeps a dataset out of the regression flags: its test set is small enough that
-one changed prediction moves a metric by several percent, so it serves as a demo only.
 ===========================================================================================#
 
 function _boston()
@@ -45,27 +43,27 @@ end
 const DATASETS = Dict(
     "boston" => (;
         description="Boston housing (OpenML 531): median home value of 506 Boston census tracts.",
-        check=false, task=:regression, target="MEDV", nrounds=400, batchsize=64,
+        task=:regression, target="MEDV", nrounds=400, batchsize=64,
         load=_boston,
     ),
     "titanic" => (;
         description="Titanic (OpenML 40945): survival of 1,309 passengers.",
-        check=false, task=:binary, target="survived", nrounds=400, batchsize=64,
+        task=:binary, target="survived", nrounds=400, batchsize=64,
         load=_titanic,
     ),
     "iris" => (;
         description="Iris (OpenML 61): species of 150 flowers, 3 classes.",
-        check=false, task=:multiclass, target="class", nrounds=400, batchsize=16,
+        task=:multiclass, target="class", nrounds=400, batchsize=16,
         load=() -> DataFrame(OpenML.load(61)),
     ),
     "california" => (;
         description="California housing (OpenML 44977): median house value of 20,640 block groups.",
-        check=true, task=:regression, target="medianHouseValue", nrounds=200, batchsize=512,
+        task=:regression, target="medianHouseValue", nrounds=200, batchsize=512,
         load=() -> DataFrame(OpenML.load(44977)),
     ),
     "higgs" => (;
         description="Higgs (OpenML 23512): signal vs background for 98k collision events.",
-        check=true, task=:binary, target="class", nrounds=50, batchsize=1024,
+        task=:binary, target="class", nrounds=50, batchsize=1024,
         load=_higgs,
     ),
 )
@@ -107,10 +105,8 @@ learner(task, arch; kwargs...) = task == :multiclass ? NeuroTabClassifier(arch; 
     NeuroTabRegressor(arch; loss=task == :binary ? :logloss : :mse, kwargs...)
 
 #===========================================================================================
-Test metrics, on the scale of the target. Accuracy is the only one where higher is better.
+Test metrics, on the scale of the target.
 ===========================================================================================#
-
-const HIGHER_IS_BETTER = Set(["accuracy"])
 
 test_metrics(task::Symbol, p, y) = test_metrics(Val(task), p, y)
 function test_metrics(::Val{:regression}, p, y)
