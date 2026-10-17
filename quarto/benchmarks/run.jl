@@ -7,7 +7,8 @@
 #   julia --project=quarto quarto/benchmarks/run.jl --device=gpu --backend=reactant higgs
 #
 # `--device` is `cpu` (default) or `gpu`, `--backend` is `zygote` (default) or `reactant`.
-# `--device=gpu` with Zygote needs CUDA and cuDNN added to the quarto environment.
+# `--backend=reactant` needs Reactant, and `--device=gpu` with Zygote needs CUDA and cuDNN,
+# added to the quarto environment.
 #
 # `bench-template.qmd` is rendered once per dataset as `bench-<dataset>.md`. Quarto still
 # writes its figures to `bench-template_files`, so they are moved to `bench-<dataset>_files`
