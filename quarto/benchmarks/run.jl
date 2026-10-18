@@ -13,15 +13,17 @@
 # writes its figures to `bench-template_files`, so they are moved to `bench-<dataset>_files`
 # and the links rewritten.
 
+datasets = ["boston", "titanic", "iris", "california", "higgs"]
+# datasets = ["boston"]
+
 dest = joinpath(@__DIR__, "..", "..", "docs", "src", "quarto")
 
 options = Dict("device" => "gpu", "backend" => "reactant")
-datasets = String[]
 for a in ARGS
     m = match(r"^--(device|backend)=(\w+)$", a)
-    isnothing(m) ? push!(datasets, a) : (options[m[1]] = m[2])
+    !isnothing(m) && (options[m[1]] = m[2])
 end
-isempty(datasets) && error("Give the datasets to render, for example `run.jl boston california`.")
+# isempty(datasets) && error("Give the datasets to render, for example `run.jl boston california`.")
 
 cd(@__DIR__) do
     for d in datasets
