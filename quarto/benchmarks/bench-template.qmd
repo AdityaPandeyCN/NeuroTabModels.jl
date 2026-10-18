@@ -3,9 +3,6 @@ engine: julia
 format:
   gfm:
     variant: -raw_html
-execute:
-  # a worker per render, so no dataset holds on to GPU memory while the next one trains
-  daemon: false
 params:
   dataset: "boston"
   device: "cpu"
