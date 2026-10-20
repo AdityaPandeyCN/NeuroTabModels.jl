@@ -842,7 +842,7 @@ end
     @test val ≈ -1.0f0
     @test M.pearson(pred_fn, x, y) ≈ 4.0f0
     @test M.is_maximise(M.pearson)
-    @test_throws TypeError L.Pearson()(idm, (;), (;), (x, y))
+    @test_throws MethodError L.Pearson()(idm, (;), (;), (x, y))
 
     w = Float32[1, 1, 1, 1]
     valw, _, _ = L.Pearson()(idm, (;), (;), (x3, y, w))
