@@ -59,9 +59,12 @@ _reshape_3d(x::AbstractVector) = reshape(x, 1, 1, :)
 _reshape_3d(x::AbstractMatrix) = reshape(x, size(x, 1), 1, size(x, 2))
 _reshape_3d(x::AbstractArray{T,3}) where {T} = x
 
+# every model returns `(outsize, k, batch)`; checked by dispatch, as a type assert slows the gradient
+_check_3d(pred::AbstractArray{<:Any,3}) = pred
+
 function _forward(model, ps, st, x)
     pred, st_ = model(x, ps, st)
-    return pred::AbstractArray{<:Any,3}, st_
+    return _check_3d(pred), st_
 end
 
 """
