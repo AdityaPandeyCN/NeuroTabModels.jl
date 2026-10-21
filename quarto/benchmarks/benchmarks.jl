@@ -13,8 +13,8 @@ using Statistics: mean, std, median
 const RESULTS_FILE = joinpath(@__DIR__, "results.csv")
 
 #===========================================================================================
-Datasets: each loader returns a DataFrame of numeric features plus the target column, and the
-offset column for a dataset with an `offset`.
+Datasets: each loader returns a DataFrame of numeric features plus the target column (a vector of
+columns for several targets), and the offset column for a dataset with an `offset`.
 Add a dataset by adding an entry to `DATASETS` and its name to `datasets` in `run.jl`.
 ===========================================================================================#
 
@@ -82,6 +82,11 @@ const DATASETS = Dict(
         task=:count, target="ClaimNb", offset="LogExposure", nrounds=100, batchsize=2048,
         load=_fremtpl,
     ),
+    "scm1d" => (;
+        description="SCM1d (OpenML 41485): next-day mean prices of 16 products in a supply chain simulation, 9,803 days.",
+        task=:regression, target=["LBL"; ["MTLp$i" for i in 2:16]], nrounds=200, batchsize=256,
+        load=() -> DataFrame(OpenML.load(41485)),
+    ),
 )
 
 """
@@ -94,7 +99,7 @@ function load_benchmark(name; seed=123)
     spec = DATASETS[name]
     df = spec.load()
     target_name, offset_name = spec.target, get(spec, :offset, nothing)
-    feature_names = setdiff(names(df), [target_name, offset_name])
+    feature_names = setdiff(names(df), vcat(target_name, offset_name))
     for f in feature_names
         df[!, f] = Float64.(df[!, f])
     end
@@ -127,8 +132,9 @@ Test metrics, on the scale of the target.
 ===========================================================================================#
 
 test_metrics(task::Symbol, p, y) = test_metrics(Val(task), p, y)
+# with several targets, a column each, the scores are the mean over targets
 function test_metrics(::Val{:regression}, p, y)
-    return ["rmse" => sqrt(mean((p .- y) .^ 2)), "mae" => mean(abs.(p .- y))]
+    return ["rmse" => mean(sqrt.(mean((p .- y) .^ 2; dims=1))), "mae" => mean(abs.(p .- y))]
 end
 function test_metrics(::Val{:binary}, p, y)
     p = clamp.(p, 1e-7, 1 - 1e-7)

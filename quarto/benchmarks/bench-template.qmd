@@ -72,9 +72,11 @@ for (name, arch) in archs
     # predictions leave the offset out; it is a log exposure, so it turns the predicted rates into counts
     isnothing(offset_name) || (p = p .* exp.(dtest[!, offset_name]))
     models[name] = m
+    # several targets are predicted as a column each
+    y = target_name isa AbstractVector ? Matrix(dtest[!, target_name]) : dtest[!, target_name]
 
     metrics = vcat(
-        test_metrics(spec.task, p, dtest[!, target_name]),
+        test_metrics(spec.task, p, y),
         [
             "best_iter" => m.info[:logger][:best_iter],
             "train_time" => train_time,

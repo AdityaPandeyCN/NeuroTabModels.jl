@@ -13,7 +13,7 @@
 # writes its figures to `bench-template_files`, so they are moved to `bench-<dataset>_files`
 # and the links rewritten.
 
-datasets = ["boston", "titanic", "iris", "california", "higgs", "fremtpl"]
+datasets = ["boston", "titanic", "iris", "california", "higgs", "fremtpl", "scm1d"]
 # datasets = ["boston"]
 
 dest = joinpath(@__DIR__, "..", "..", "docs", "src", "quarto")
