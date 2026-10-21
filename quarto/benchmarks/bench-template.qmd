@@ -34,7 +34,7 @@ The data is split 70/15/15 into train, eval and test sets. Features are standard
 
 ```{julia}
 data = load_benchmark(dataset)
-(; spec, dtrain, deval, dtest, feature_names, target_name) = data
+(; spec, dtrain, deval, dtest, feature_names, target_name, offset_name) = data
 (; task=spec.task, train=nrow(dtrain), eval=nrow(deval), test=nrow(dtest), features=length(feature_names))
 ```
 
@@ -64,11 +64,13 @@ info = run_info()
 for (name, arch) in archs
     config = learner(spec.task, arch; settings...)
     warmup = learner(spec.task, arch; settings..., nrounds=1)
-    NeuroTabModels.fit(warmup, dtrain; feature_names, target_name, deval, verbosity=0)
+    NeuroTabModels.fit(warmup, dtrain; feature_names, target_name, offset_name, deval, verbosity=0)
 
-    train_time = @elapsed m = NeuroTabModels.fit(config, dtrain; feature_names, target_name, deval, verbosity=0)
+    train_time = @elapsed m = NeuroTabModels.fit(config, dtrain; feature_names, target_name, offset_name, deval, verbosity=0)
     m(dtest)
     predict_time = @elapsed p = m(dtest)
+    # predictions leave the offset out; it is a log exposure, so it turns the predicted rates into counts
+    isnothing(offset_name) || (p = p .* exp.(dtest[!, offset_name]))
     models[name] = m
 
     metrics = vcat(

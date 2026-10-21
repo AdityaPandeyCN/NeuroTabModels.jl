@@ -13,8 +13,9 @@ using Statistics: mean, std, median
 const RESULTS_FILE = joinpath(@__DIR__, "results.csv")
 
 #===========================================================================================
-Datasets: each loader returns a DataFrame of numeric features plus the target column.
-Add a dataset by adding an entry to `DATASETS`; `run.jl <name>` renders its report.
+Datasets: each loader returns a DataFrame of numeric features plus the target column, and the
+offset column for a dataset with an `offset`.
+Add a dataset by adding an entry to `DATASETS` and its name to `datasets` in `run.jl`.
 ===========================================================================================#
 
 function _boston()
@@ -37,6 +38,17 @@ function _higgs()
     df = dropmissing(DataFrame(OpenML.load(23512)))
     df.class = parse.(Float64, String.(df.class))
     return df
+end
+
+# The numeric policy features, with extreme values capped. `Exposure` is not a feature but the
+# offset: a policy active for a full year has more chances to claim than one active for a month.
+function _fremtpl()
+    df = DataFrame(OpenML.load(41214))
+    return DataFrame(;
+        df.DrivAge, df.VehPower,
+        VehAge=min.(df.VehAge, 20), BonusMalus=min.(df.BonusMalus, 150), LogDensity=log.(df.Density),
+        ClaimNb=min.(df.ClaimNb, 4), LogExposure=log.(min.(df.Exposure, 1)),
+    )
 end
 
 const DATASETS = Dict(
@@ -65,6 +77,11 @@ const DATASETS = Dict(
         task=:binary, target="class", nrounds=100, batchsize=1024,
         load=_higgs,
     ),
+    "fremtpl" => (;
+        description="freMTPL2freq (OpenML 41214): claim counts of 678k French motor insurance policies, with the log exposure as offset.",
+        task=:count, target="ClaimNb", offset="LogExposure", nrounds=100, batchsize=2048,
+        load=_fremtpl,
+    ),
 )
 
 """
@@ -76,8 +93,8 @@ standardised with the train mean and std.
 function load_benchmark(name; seed=123)
     spec = DATASETS[name]
     df = spec.load()
-    target_name = spec.target
-    feature_names = setdiff(names(df), [target_name])
+    target_name, offset_name = spec.target, get(spec, :offset, nothing)
+    feature_names = setdiff(names(df), [target_name, offset_name])
     for f in feature_names
         df[!, f] = Float64.(df[!, f])
     end
@@ -96,12 +113,14 @@ function load_benchmark(name; seed=123)
             d[!, f] = (d[!, f] .- μ) ./ σ
         end
     end
-    return (; spec, dtrain, deval, dtest, feature_names, target_name)
+    return (; spec, dtrain, deval, dtest, feature_names, target_name, offset_name)
 end
 
-# `:mse` regression, `:logloss` binary classification, or a classifier for several classes
+const LOSSES = Dict(:regression => :mse, :binary => :logloss, :count => :poisson)
+
+# a regressor with the task's loss, or a classifier for several classes
 learner(task, arch; kwargs...) = task == :multiclass ? NeuroTabClassifier(arch; kwargs...) :
-    NeuroTabRegressor(arch; loss=task == :binary ? :logloss : :mse, kwargs...)
+    NeuroTabRegressor(arch; loss=LOSSES[task], kwargs...)
 
 #===========================================================================================
 Test metrics, on the scale of the target.
@@ -120,6 +139,11 @@ function test_metrics(::Val{:multiclass}, p, y)
     k = levelcode.(y)
     mlogloss = -mean(log(max(p[i, k[i]], 1e-7)) for i in eachindex(k))
     return ["mlogloss" => mlogloss, "accuracy" => mean(argmax.(eachrow(p)) .== k)]
+end
+# `p` is the expected count; `total_ratio` is the predicted total over the observed total
+function test_metrics(::Val{:count}, p, y)
+    deviance = 2 * mean(y .* log.(max.(y, 1e-7) ./ p) .- (y .- p))
+    return ["deviance" => deviance, "total_ratio" => sum(p) / sum(y)]
 end
 
 #===========================================================================================
