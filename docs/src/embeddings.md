@@ -1,8 +1,9 @@
 # Embeddings
 
 Embeddings transform raw input columns before they reach a model backbone. Numerical
-embeddings operate column-wise, while temporal embeddings reserve one column for
-time features and concatenate that branch with the remaining numerical features.
+embeddings operate column-wise, a temporal embedding takes one named time column, and a
+categorical embedding takes a named list of categorical columns. The three branches are
+concatenated: numerical, temporal, then categorical.
 
 They do not consume the grouped padding mask: embeddings map each observation
 independently, and `MaskedModel` only reattaches `w` at the `*Attn` core. See
@@ -17,24 +18,29 @@ independently, and `MaskedModel` only reattaches `w` at the `*Attn` core. See
 - `BatchNormEmbeddings`: batch-normalizes raw numerical features without expanding them.
 - `LayerNormEmbeddings`: layer-normalizes raw numerical features without expanding them.
 - `TemporalEmbeddings`: embeds one time column with Fourier features and an optional trend term.
+- `CategoricalEmbeddings`: learns a vector per level of each listed categorical column; a level unseen at fit time gets its own vector.
 
 ## Configuration
 
-Use `EmbeddingLayer` to combine a numerical embedding with an optional temporal
-branch. A dictionary form is also available for model configuration dictionaries.
+Use `EmbeddingLayer` to combine a numerical embedding with optional temporal and
+categorical branches. `temp` and `cat` name the columns they embed; `num` embeds every
+other column in `feature_names`. A dictionary form is also available for model
+configuration dictionaries.
 
 ```julia
 EmbeddingLayer(PeriodicEmbeddings(; d_embedding=24))
 
 EmbeddingLayer(;
     num=PiecewiseLinearEmbeddings(; bins=32),
-    temp=TemporalEmbeddings(; index=1),
+    temp=TemporalEmbeddings(; feature=:date),
+    cat=CategoricalEmbeddings(; features=[:store, :dept], d_embedding=8),
 )
 
 EmbeddingLayer(Dict(
     :embedding_type => :periodic,
     :d_embedding => 24,
-    :temporal => Dict(:index => 1),
+    :temporal => Dict(:feature => :date),
+    :categorical => Dict(:features => [:store, :dept]),
 ))
 ```
 
