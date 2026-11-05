@@ -164,3 +164,21 @@ end
         dtrain; feature_names=[:x1, :t], target_name=:y,
     )
 end
+
+@testset "Padded groups do not reach BatchNorm statistics" begin
+    nreal, npad = 5, 3
+    x = vcat(randn(Float32, 2, nreal), Float32[1 2 3 1 2])
+    xpad = hcat(x, zeros(Float32, 3, npad))
+    w = reshape(Float32[ones(nreal); zeros(npad)], 1, 1, :)
+    config = EmbeddingLayer(; num=BatchNormEmbeddings(), cat=CategoricalEmbeddings(; features=[:c], d_embedding=2))
+    embed = build_embedding_chain(config, [:a, :b, :c]; cat_levels=Dict{Symbol,Vector}(:c => [1, 2, 3]))
+    ins = embedding_width(embed, zeros(Float32, 3, 2), Xoshiro(1))
+    for arch in (NeuroTabModels.MLPConfig(; stack_size=2), NeuroTabModels.ResNetConfig())
+        m = NeuroTabModels.MaskedModel(embed, arch(; ins, outsize=1))
+        ps, st = Lux.setup(Xoshiro(2), m)
+        y, st_real = m(x, ps, st)
+        y_pad, st_pad = m((xpad, w), ps, st)
+        @test y_pad[:, :, 1:nreal] ≈ y
+        @test st_pad.embed.layer_1.layer_2.running_var ≈ st_real.embed.layer_1.layer_2.running_var
+    end
+end

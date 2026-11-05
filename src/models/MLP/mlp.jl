@@ -6,7 +6,7 @@ using Lux
 using LuxCore
 
 import ..Models: Architecture, get_activation, uses_batch_mask, interleave_heads, MaskedBatchNorm, CarryMask, MaskSkip
-import ..Layers: _untuple, _valid_tokens, _attn_blocks, _pred_head
+import ..Layers: _untuple, _valid_tokens, _attn_blocks, _pred_head, _res_block
 
 """
     MLPConfig(; kwargs...)
@@ -49,13 +49,13 @@ function MLPConfig(; kwargs...)
 end
 
 function _mlp_trunk(ins::Int, hsize::Int, outsize::Int, act, stack_size::Int, dropout::Float64)
-    layers = Any[Dense(ins => hsize),]
+    layers = Any[CarryMask(Dense(ins => hsize))]
     for _ in 1:stack_size
-        push!(layers, BatchNorm(hsize, act))
-        push!(layers, Dense(hsize => hsize))
-        dropout > 0 && push!(layers, Dropout(dropout))
+        push!(layers, MaskedBatchNorm(hsize, act))
+        push!(layers, CarryMask(Dense(hsize => hsize)))
+        dropout > 0 && push!(layers, CarryMask(Dropout(dropout)))
     end
-    push!(layers, Dense(hsize => outsize), ReshapeLayer((outsize, 1)))
+    push!(layers, WrappedFunction(_untuple), Dense(hsize => outsize), ReshapeLayer((outsize, 1)))
     return Chain(layers...)
 end
 
@@ -69,7 +69,7 @@ Build a `Lux.Chain` from `config`.
 - `outsize::Int`: Number of output units.
 
 # Returns
-A `Lux.Chain` of `Dense` → `BatchNorm` → `Dense` blocks with optional dropout.
+A `Lux.Chain` of `Dense` → `MaskedBatchNorm` → `Dense` blocks with optional dropout.
 """
 function (config::MLPConfig)(; ins, outsize, kwargs...)
     act = get_activation(config.act)
@@ -79,10 +79,10 @@ function (config::MLPConfig)(; ins, outsize, kwargs...)
         iseven(outsize) || error("MLE_tree_split requires an even `outsize` (e.g., 2 for μ and σ). Got: $outsize")
         head_outsize = outsize ÷ 2
         chain = Chain(
-            Parallel(
-                interleave_heads,
+            BranchLayer(
                 _mlp_trunk(ins, hsize, head_outsize, act, config.stack_size, config.dropout),
-                _mlp_trunk(ins, hsize, head_outsize, act, config.stack_size, config.dropout),
+                _mlp_trunk(ins, hsize, head_outsize, act, config.stack_size, config.dropout);
+                fusion=interleave_heads,
             ),
         )
     else

@@ -117,19 +117,6 @@ function MLPAttnConfig(; kwargs...)
 end
 
 """
-    _res_block(hsize, act, dropout)
-
-ResNet residual block with masked BatchNorm so grouped pads can be ignored.
-"""
-function _res_block(hsize::Int, act, dropout::Float64)
-    layers = Any[CarryMask(Dense(hsize => hsize)), MaskedBatchNorm(hsize, act)]
-    dropout > 0 && push!(layers, CarryMask(Dropout(dropout)))
-    push!(layers, CarryMask(Dense(hsize => hsize)))
-    push!(layers, MaskedBatchNorm(hsize))
-    return Chain(MaskSkip(Chain(layers...)), MaskedBatchNorm(hsize, act))
-end
-
-"""
     _mlp_encoder(ins, hsize, act, stack_size, dropout)
 
 ResNet trunk without the prediction `Dense`. Accepts `x` or `(x, valid)` so

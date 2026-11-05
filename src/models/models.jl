@@ -10,7 +10,7 @@ export NeuroTreeConfig, MLPConfig, MLPAttnConfig, NeuroTreeAttnConfig
 export ResNetConfig, TabMConfig, MOETreeConfig, ModernNCAConfig
 
 using ..Losses
-using Lux: Chain
+using Lux: Chain, BranchLayer
 using LuxCore: AbstractLuxContainerLayer
 using NNlib
 
@@ -57,20 +57,17 @@ override this.
 """
 uses_batch_mask(::Any) = false
 uses_batch_mask(c::Chain) = any(uses_batch_mask, c.layers)
+uses_batch_mask(b::BranchLayer) = any(uses_batch_mask, b.layers)
 
 """
     MaskedModel(embed, core)
 
-Assemble embeddings and a core backbone that may take an optional padding mask.
+Assemble embeddings and a core backbone that accept an optional padding mask.
 
-Embeddings still see only `x`. When the input is `(x, w)`, this layer runs
-`embed(x)` then `core((z, w))`. Used instead of `Chain(embed, core)` when the
-core mixes across observations and needs to ignore padded group-buffer slots.
-
-Embeddings are per-observation maps, so a pad column cannot contaminate a
-real column there; the mask is only required where the core reduces or mixes
-across the batch (attention, `MaskedBatchNorm`). See the "Padding and masks"
-design page.
+The input is either `x` or `(x, w)`, and `embed` and `core` each take and return the same
+form. Layers that reduce or mix across the batch (`MaskedBatchNorm`, attention) read `w`;
+every other layer carries it. Used instead of `Chain(embed, core)` when the core reads the
+mask or training batches are padded groups. See the "Padding and masks" design page.
 """
 struct MaskedModel{E,C} <: AbstractLuxContainerLayer{(:embed, :core)}
     embed::E
@@ -79,19 +76,16 @@ end
 
 uses_batch_mask(::MaskedModel) = true
 
-function (m::MaskedModel)(x::AbstractArray, ps, st)
+function (m::MaskedModel)(x, ps, st)
     z, st_e = m.embed(x, ps.embed, st.embed)
     y, st_c = m.core(z, ps.core, st.core)
     return y, (; embed=st_e, core=st_c)
 end
-function (m::MaskedModel)((x, w)::Tuple, ps, st)
-    z, st_e = m.embed(x, ps.embed, st.embed)
-    y, st_c = m.core((z, w), ps.core, st.core)
-    return y, (; embed=st_e, core=st_c)
-end
 
 import ..Losses: masked_input
-masked_input(::MaskedModel, x, w) = (x, w)
+# Only grouped loaders pad, and they shape `w` as `(1, 1, bs)`. A vector `w` is a sample
+# weight, which scales the loss but is not a mask.
+masked_input(::MaskedModel, x, w::AbstractArray{<:Any,3}) = (x, w)
 
 """
     train_dataloader(arch, m, default, df; kwargs...)
@@ -154,6 +148,7 @@ end
 
 include("layers/layers.jl")
 using .Layers: MaskedBatchNorm, CarryMask, MaskSkip, GroupedDense, AttnResidual, ResidualScale
+uses_batch_mask(::MaskedBatchNorm) = true
 
 include("embeddings/embeddings.jl")
 using .Embeddings

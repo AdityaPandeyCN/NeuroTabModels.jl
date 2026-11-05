@@ -1,4 +1,4 @@
-# Embeddings design
+# Embeddings
 Evovest
 
 - [Setup](#setup)
@@ -14,9 +14,10 @@ Evovest
 
 Embeddings map each raw column into a representation the backbone
 consumes. Numerical embeddings act column-wise. A temporal embedding
-reserves one time column; `EmbeddingLayer` concatenates that branch
-last. Piecewise-linear and temporal embeddings need training data at
-build time (`needs_x_train`).
+takes one named time column and a categorical embedding takes a named
+list of categorical columns; `EmbeddingLayer` concatenates numerical,
+temporal, then categorical. Piecewise-linear and temporal embeddings
+need training data at build time (`needs_x_train`).
 
 ## Setup
 
@@ -193,8 +194,8 @@ embed_point(layer_identity, ps_identity, st_identity, x1)
 
 Temporal embedding is a separate branch on one time column, not a
 column-wise numerical map. It is always attached through
-`EmbeddingLayer`, which routes that column to `temp` and concatenates
-the result after the numerical features.
+`EmbeddingLayer`, which routes the column named by `temp.feature` to
+`temp` and concatenates the result after the numerical features.
 
 ### TemporalEmbeddings
 
@@ -216,7 +217,7 @@ coordinate is the trend.
 ``` julia
 order = [2, 1]
 periods = Float32[2, 4]
-conf_temporal = EmbeddingLayer(; temp=TemporalEmbeddings(; index=1, order, periods, trend=true, d_embedding))
+conf_temporal = EmbeddingLayer(; temp=TemporalEmbeddings(; feature=:x, order, periods, trend=true, d_embedding))
 layer_temporal, ps_temporal, st_temporal = setup_embedding(conf_temporal; x_train)
 h_temporal = temporal_basis(layer_temporal, ps_temporal, st_temporal, xgrid)
 y_temporal = embed_grid(layer_temporal, ps_temporal, st_temporal, xgrid)
@@ -243,22 +244,25 @@ trend:
 ### EmbeddingLayer
 
 The rest of this report built a **numerical** config for a single
-column. A real table has several numeric columns and, sometimes, one
-time column. `EmbeddingLayer` is the wrapper that says how those two
-kinds of columns are treated.
+column. A real table has several numeric columns and, sometimes, a time
+column or categorical columns. `EmbeddingLayer` is the wrapper that says
+how each kind of column is treated.
 
 ``` text
-input columns:   [  x1   x2   x3   t  ]
-                    └─────────┘    │
-                         num       temp  (temp.index = 4)
-                           │       │
-                           └─ vcat ┘  →  backbone
+input columns:   [  x1   x2   t   store  ]
+                    └─────┘   │     │
+                      num    temp   cat   (temp.feature = :t, cat.features = [:store])
+                       │      │     │
+                       └──── vcat ──┘  →  backbone
 ```
 
-- `num` — applied to every column **except** the time column. Default:
-  `IdentityEmbedding()` (pass-through).
-- `temp` — applied to **one** column, whose position is `temp.index`
-  (1-based in the feature list). Default: `nothing` (no time branch).
+- `num` — applied to every column **not** named by `temp` or `cat`.
+  Default: `IdentityEmbedding()` (pass-through).
+- `temp` — applied to the **one** column named `temp.feature`. Default:
+  `nothing` (no time branch).
+- `cat` — a learned vector per level of each column in `cat.features`;
+  levels come from the training data and an unseen level gets its own
+  vector. Default: `nothing` (no categorical branch).
 
 You pass this object as `embedding_config` when fitting; `fit` then
 builds the chain. The snippets below call `build_embedding_chain` only
@@ -271,29 +275,28 @@ as earlier sections did):
 EmbeddingLayer(; num=LinearEmbeddings(; d_embedding, activation=:identity))
 ```
 
-    EmbeddingLayer{LinearEmbeddings, Nothing}(LinearEmbeddings(4, :identity), nothing)
+    EmbeddingLayer{LinearEmbeddings, Nothing, Nothing}(LinearEmbeddings(4, :identity), nothing, nothing)
 
-**Temporal only** — numeric columns pass through; column `index` is the
-timestamp:
+**Temporal only** — numeric columns pass through; the column named `:t`
+is the timestamp:
 
 ``` julia
-EmbeddingLayer(; temp=TemporalEmbeddings(; index=1, d_embedding))
+EmbeddingLayer(; temp=TemporalEmbeddings(; feature=:t, d_embedding))
 ```
 
-    EmbeddingLayer{IdentityEmbedding, TemporalEmbeddings}(IdentityEmbedding(), TemporalEmbeddings(1, [4, 1, 7, 0], Float32[3.15576f7, 2.6298f6, 604800.0, 86400.0], true, 4))
+    EmbeddingLayer{IdentityEmbedding, TemporalEmbeddings, Nothing}(IdentityEmbedding(), TemporalEmbeddings(:t, [4, 1, 7, 0], Float32[3.15576f7, 2.6298f6, 604800.0, 86400.0], true, 4), nothing)
 
-**Both** — two columns, `x1` then `t`. `index=2` means “the second
-column is time”, not embedding width:
+**Both** — two columns, `x1` then `t`:
 
 ``` julia
-nfeats = 2          # columns in the table
-time_column = 2     # t is column 2
+feature_names = [:x1, :t]
+nfeats = length(feature_names)
 conf_combo = EmbeddingLayer(;
     num=LinearEmbeddings(; d_embedding, activation=:identity),
-    temp=TemporalEmbeddings(; index=time_column, order=[2], periods=Float32[4], trend=true, d_embedding),
+    temp=TemporalEmbeddings(; feature=:t, order=[2], periods=Float32[4], trend=true, d_embedding),
 )
 x_train2 = hcat(collect(xgrid), collect(xgrid))  # (n_samples, nfeats): [x1 | t]
-layer_combo = Embeddings.build_embedding_chain(conf_combo, nfeats; x_train=x_train2)
+layer_combo = Embeddings.build_embedding_chain(conf_combo, feature_names; x_train=x_train2)
 
 # widths: one numeric feature → d_embedding; time → d_embedding projection + 1 trend
 n_numeric = nfeats - 1
@@ -311,11 +314,12 @@ batch = randn(Float32, nfeats, 4)  # (nfeats, batch) dummy input
 
     (width_num = 4, width_temp = 5, concatenated = 9, measured = 9)
 
-The second argument of `build_embedding_chain` is `nfeats` (how many
-columns the matrix has), not `temp.index`. `x_train` is
-`(n_samples, nfeats)`.
+The second argument of `build_embedding_chain` is the feature names, in
+input row order; `temp.feature` and `cat.features` are looked up there.
+`x_train` is `(n_samples, nfeats)`.
 
 For hyperparameter search, a `Dict` is accepted: `:embedding_type`
 selects `num` (`:linear`, `:periodic`, `:piecewise`, `:batchnorm`,
-`:layernorm`, `:identity`), and `:temporal => Dict(:index => 2, ...)` builds `temp`.
-Unknown keys are ignored.
+`:layernorm`, `:identity`), `:temporal => Dict(:feature => :t, ...)`
+builds `temp`, and `:categorical => Dict(:features => [:store], ...)`
+builds `cat`. Unknown keys are ignored.

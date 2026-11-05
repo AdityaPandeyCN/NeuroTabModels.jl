@@ -12,7 +12,7 @@ export BatchNormEmbeddings, LayerNormEmbeddings, TemporalEmbeddings, Categorical
 export EmbeddingLayer, build_embedding_chain, needs_x_train, temporal_out_dim
 export embedding_width
 
-using ..Layers: GroupedDense
+using ..Layers: GroupedDense, MaskedBatchNorm, CarryMask
 
 include("compute_bins.jl")
 include("linear.jl")

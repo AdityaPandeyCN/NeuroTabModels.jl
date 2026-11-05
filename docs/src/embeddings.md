@@ -5,9 +5,9 @@ embeddings operate column-wise, a temporal embedding takes one named time column
 categorical embedding takes a named list of categorical columns. The three branches are
 concatenated: numerical, temporal, then categorical.
 
-They do not consume the grouped padding mask: embeddings map each observation
-independently, and `MaskedModel` only reattaches `w` at the `*Attn` core. See
-[Grouped padding and masks](@ref).
+With grouped training, `BatchNormEmbeddings` takes its statistics from the real
+rows of each padded group only; the other embeddings map each observation
+independently and carry the mask through. See [Grouped padding and masks](@ref).
 
 ## Available Embeddings
 

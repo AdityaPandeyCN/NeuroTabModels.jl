@@ -308,19 +308,26 @@ needs_x_train(config::EmbeddingLayer) = needs_x_train(config.num) || needs_x_tra
 # output. Expanding types append their own FlattenLayer; BatchNorm and LayerNorm are
 # already 2D and Identity is a no-op. The builder never inspects the type to decide
 # how to flatten; adding a new numerical embedding means adding one method here.
-# Row (feature-column) selector used by the `Parallel` branches. Named (not a
+# Every built layer takes `x` or `(x, w)`: per-observation maps carry `w` in a
+# `CarryMask`, BatchNorm reads it.
+# Row (feature-column) selector used by the `BranchLayer` branches. Named (not a
 # closure) so the resulting `WrappedFunction` is concretely typed via `Base.Fix2`.
 _select_rows(x::AbstractMatrix, rows) = x[rows, :]
+_select_rows((x, w)::Tuple, rows) = (x[rows, :], w)
+
+# `BranchLayer` fusion: the branch outputs concatenated, the mask carried once.
+_concat(ys::AbstractArray...) = vcat(ys...)
+_concat(ys::Tuple...) = (vcat(map(first, ys)...), last(first(ys)))
 
 _build_num(::IdentityEmbedding; nfeats::Int, x_train=nothing) = NoOpLayer()
 function _build_num(config::LinearEmbeddings; nfeats::Int, x_train=nothing)
-    Chain(
+    CarryMask(Chain(
         _LinearEmbeddings(; nfeats, d_embedding=config.d_embedding, activation=act_dict[config.activation]),
         FlattenLayer(),
-    )
+    ))
 end
 function _build_num(config::PeriodicEmbeddings; nfeats::Int, x_train=nothing)
-    Chain(
+    CarryMask(Chain(
         _PeriodicEmbeddings(;
             nfeats,
             d_embedding=config.d_embedding,
@@ -330,11 +337,11 @@ function _build_num(config::PeriodicEmbeddings; nfeats::Int, x_train=nothing)
             lite=config.lite,
         ),
         FlattenLayer(),
-    )
+    ))
 end
 function _build_num(config::PiecewiseLinearEmbeddings; nfeats::Int, x_train=nothing)
     x_train === nothing && error("PiecewiseLinearEmbeddings requires x_train to compute bin edges")
-    Chain(
+    CarryMask(Chain(
         _PiecewiseLinearEmbeddings(;
             bins=compute_bins(x_train; bins=config.nbins),
             d_embedding=config.d_embedding,
@@ -342,20 +349,20 @@ function _build_num(config::PiecewiseLinearEmbeddings; nfeats::Int, x_train=noth
             version=config.version,
         ),
         FlattenLayer(),
-    )
+    ))
 end
 _build_num(::BatchNormEmbeddings; nfeats::Int, x_train=nothing) = _BatchNormEmbeddings(; nfeats)
-_build_num(::LayerNormEmbeddings; nfeats::Int, x_train=nothing) = _LayerNormEmbeddings(; nfeats)
+_build_num(::LayerNormEmbeddings; nfeats::Int, x_train=nothing) = CarryMask(_LayerNormEmbeddings(; nfeats))
 
 function _build_temp(t::TemporalEmbeddings, x_col)
     x_col === nothing && error("TemporalEmbeddings requires x_train for t_mean/t_std")
     t_mean = Float32(mean(x_col))
     t_std = length(x_col) > 1 ? max(Float32(std(x_col)), 1.0f-6) : 1.0f0
-    _TemporalEmbeddings(t_mean, t_std, t.order, t.trend, t.d_embedding; periods=t.periods)
+    CarryMask(_TemporalEmbeddings(t_mean, t_std, t.order, t.trend, t.d_embedding; periods=t.periods))
 end
 
 _build_cat(c::CategoricalEmbeddings, cardinalities) =
-    Chain(_CategoricalEmbeddings(cardinalities, c.d_embedding), FlattenLayer())
+    CarryMask(Chain(_CategoricalEmbeddings(cardinalities, c.d_embedding), FlattenLayer()))
 
 _route(rows, layer) = Chain(WrappedFunction(Base.Fix2(_select_rows, rows)), layer)
 _columns(::Nothing, rows) = nothing
@@ -372,7 +379,7 @@ end
     build_embedding_chain(config, feature_names; x_train=nothing, cat_levels=Dict())
 
 Build the embedding chain for `config`. A numerical-only config embeds every column. With a
-temporal or categorical branch the input is routed through a `Lux.Parallel`: `num` gets the
+temporal or categorical branch the input is routed through a `Lux.BranchLayer`: `num` gets the
 columns not named by `temp` or `cat`, and the outputs are concatenated numerical, temporal,
 categorical.
 
@@ -404,7 +411,7 @@ function build_embedding_chain(
         _build_temp(config.temp, _columns(x_train, only(temp_rows)))))
     isnothing(config.cat) || push!(branches, _route(cat_rows,
         _build_cat(config.cat, [length(cat_levels[f]) for f in config.cat.features])))
-    return Parallel(vcat, branches...)
+    return BranchLayer(branches...; fusion=_concat)
 end
 
 """

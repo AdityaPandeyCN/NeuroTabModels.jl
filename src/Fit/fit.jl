@@ -8,6 +8,7 @@ using ..Models
 using ..Losses
 using ..Metrics
 using ..Infer: reduce_pred, _get_device
+using ..Models.Layers: _untuple
 import ..Losses: noutputs, scales_target
 
 import Random: Xoshiro, default_rng
@@ -108,6 +109,9 @@ function init(
     core_chain = config.arch(; ins, outsize, loss)
     chain = if uses_batch_mask(core_chain)
         MaskedModel(embed_chain, core_chain)
+    elseif !isnothing(group_name)
+        # padded groups still reach the embedding's batch statistics; the core takes `x` alone
+        MaskedModel(embed_chain, Chain(WrappedFunction(_untuple), core_chain))
     else
         Chain(embed_chain, core_chain)
     end
