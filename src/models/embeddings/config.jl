@@ -276,16 +276,6 @@ function EmbeddingLayer(d::AbstractDict)
     return EmbeddingLayer(num, temp, cat)
 end
 
-# Output width of a temporal embedding: d_embedding, +1 when trend is appended.
-temporal_out_dim(t::TemporalEmbeddings) = t.d_embedding + (t.trend ? 1 : 0)
-
-# Per-feature output width of a numerical embedding. Identity, BatchNorm and LayerNorm
-# keep each feature at width 1; the expanding embeddings emit `d_embedding` columns per feature.
-_num_d_embedding(::IdentityEmbedding) = 1
-_num_d_embedding(::BatchNormEmbeddings) = 1
-_num_d_embedding(::LayerNormEmbeddings) = 1
-_num_d_embedding(config::Union{LinearEmbeddings,PeriodicEmbeddings,PiecewiseLinearEmbeddings}) = config.d_embedding
-
 """
     needs_x_train(config) -> Bool
 
