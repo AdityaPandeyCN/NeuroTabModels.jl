@@ -5,8 +5,8 @@ belong to the same group. A grouped loader (`group_name`) uses `batchsize=0`:
 each step is one group, padded to a common width. Attention’s own batch
 dimension is therefore always `1` — the sequence is the group.
 
-This page covers that padding: where `w` comes from, which layers read it,
-and how the rest of the chain carries it.
+This page covers that padding: where `w` comes from, how it passes through
+embeddings, and how the core consumes it.
 
 ## Why there is a pad at all
 
@@ -42,28 +42,26 @@ real ones.
 | Job | Who uses it | What happens to pads |
 | --- | --- | --- |
 | **Loss / metric weight** | `_reduce(loss, w)` and eval | pad slots contribute `0` to the scalar loss |
-| **Padding mask** | `MaskedBatchNorm`, attention | pads are excluded from BatchNorm stats and from attention keys |
+| **Batch mask** | `MaskedBatchNorm`, `BatchNormEmbeddings`, attention | pads are excluded from attention keys and from BatchNorm stats |
 
-Any layer that reduces or mixes across the group needs the second job. A pad
-token with value `0` would still be a key every query can attend to, and
-BatchNorm is a reduction over the group: pad zeros would enter `μ` / `σ` and
-running stats. Those layers read `w > 0` as a valid-token flag; sample weights
-never change BatchNorm statistics.
+Pad rows still produce a prediction, but that prediction is multiplied by
+`w = 0` in the loss.
 
-## Who reads `w`
+Any layer that reduces across the group also needs the second job. A pad
+token with value `0` would still be a key every query can attend to.
+BatchNorm (in `MLP`, `ResNet`, the `*Attn` encoders and `BatchNormEmbeddings`)
+is a reduction over the group: pad zeros would enter `μ` / `σ` and running
+stats. Those layers must see a valid-token flag.
 
-Every layer takes either `x` or `(x, w)` and returns the same form. Layers that
-reduce or mix across the group read `w`; per-observation layers carry it:
+## How embeddings take `w`
 
-| Layer | With `(x, w)` |
-| --- | --- |
-| `MaskedBatchNorm` (MLP, ResNet, `*Attn` encoders, `BatchNormEmbeddings`) | μ, σ and running stats from valid tokens only |
-| `AttnResidual` | padded keys masked for every query |
-| `CarryMask(layer)` (Dense, Dropout, per-observation embeddings) | `(layer(x), w)` |
-| `MaskSkip(layer)` | `(x + layer(x), w)` |
+Most embeddings are per-observation maps. A linear / periodic / piecewise-linear /
+identity / layer-norm embedding applied to column `j` does not read column
+`k`. Computing `embed(x_pad)` cannot change `embed(x_real)`; these carry `w`
+through unchanged in a `CarryMask`. `BatchNormEmbeddings` reduces across the
+group and reads `w`.
 
-Embedding branches are routed with a `BranchLayer`, which hands `(x, w)` whole
-to each branch, and their outputs are concatenated with `w` carried once.
+The wrapper passes `(x, w)` to both embed and core:
 
 ```
 input is either x  or  (x, w)
@@ -73,42 +71,44 @@ input is either x  or  (x, w)
           ┌────────────┴────────────┐
           │      MaskedModel        │
           │                         │
-          │   (z, w) = embed(x, w)  │  ← BatchNormEmbeddings reads w
+          │   (z, w) = embed((x, w))│  ← embeddings carry w
           │                         │
-          │   y = core((z, w))      │  ← MaskedBN / attention read w
+          │   y = core((z, w))      │  ← *Attn / MaskedBN: (z, w)
           └────────────┬────────────┘
                        │
                        y
 ```
 
-`fit` chooses the wrapper once:
+`fit` chooses that wrapper from the core, not from the loader:
 
 ```julia
 chain = if uses_batch_mask(core_chain)
     MaskedModel(embed_chain, core_chain)   # MLP, ResNet, MLPAttn, NeuroTreeAttn
 elseif !isnothing(group_name)
-    # the core takes `x` alone, but the embedding may still hold batch statistics
+    # the embedding still sees the mask; the core takes `x` alone
     MaskedModel(embed_chain, Chain(WrappedFunction(_untuple), core_chain))
 else
     Chain(embed_chain, core_chain)
 end
 ```
 
-`masked_input` decides whether `w` is forwarded into the assembled chain. Only
-a padded group carries a mask, and grouped loaders shape `w` as `(1, 1, bs)`:
+Call sites do not special-case embeddings either. `masked_input` decides
+whether `w` is forwarded into the assembled chain:
 
 ```
-Chain:                               masked_input(model, x, w) = x
-MaskedModel, w::Array{T,3} (grouped): masked_input(model, x, w) = (x, w)
-MaskedModel, w::Vector (ungrouped):  masked_input(model, x, w) = x
+Chain:         masked_input(model, x, w) = x
+MaskedModel:   masked_input(model, x, w) = (x, w)   # w of shape (1, 1, buffer) only
 ```
 
 Loss, eval, and infer all go through that hook. The grouped loader produces
-`(x, y, w)`, or `(x, y, w, offset)` with `offset_name`.
+`(x, y, w)`, or `(x, y, w, offset)` with `offset_name`; only mask-aware chains
+unpack `w` as a model input.
 
-Pad columns are still forwarded. The stream stays a rectangular
-`(hidden, buffer)` matrix: BatchNorm and attention drop pads from reductions,
-the head still emits a prediction per slot, and the loss zeros those slots.
+Pad columns are still forwarded. After `embed(x)` the core keeps a rectangular
+`(hidden, buffer)` stream: attention and `MaskedBatchNorm` drop pads from
+reductions, the head still emits a prediction per slot, and the loss zeros
+those slots. Embeddings may produce garbage on pad columns; those tokens must
+not leak into real tokens downstream.
 
 ## End-to-end flow
 
@@ -185,10 +185,10 @@ mask and not a causal triangle.
 ## Ungrouped batches
 
 With no `group_name`, there are no pad slots. Every column is a real
-observation and every layer gets a plain `x`, even when the loader carries
-sample weights: an unmasked `MaskedBatchNorm` is Lux's `BatchNorm`, so ungrouped
-MLP and ResNet train exactly as with plain `BatchNorm`. `n_attn_layers=0` on
-`MLPAttn` is that encoder plus a linear head: a ResNet ablation.
+observation. `*Attn` models still accept a plain `x` (the unmasked method).
+`n_attn_layers=0` on `MLPAttn` is that encoder plus a linear head: a ResNet
+ablation, including `MaskedBatchNorm` with `valid = nothing`, which is
+ordinary BatchNorm.
 
-Grouped weights mark pads with `0`, so the grouped loader rejects non-positive
-or non-finite weights.
+If an ungrouped loader also carries sample weights, they only scale the loss:
+`masked_input` forwards `w` only in the grouped `(1, 1, buffer)` shape.
