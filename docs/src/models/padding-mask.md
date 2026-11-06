@@ -42,17 +42,16 @@ real ones.
 | Job | Who uses it | What happens to pads |
 | --- | --- | --- |
 | **Loss / metric weight** | `_reduce(loss, w)` and eval | pad slots contribute `0` to the scalar loss |
-| **Attention mask** | `MLPAttn` / `NeuroTreeAttn` | pads are excluded from attention keys and from `MaskedBatchNorm` stats |
+| **Batch mask** | `MLP`, `ResNet`, `MLPAttn`, `NeuroTreeAttn` | pads are excluded from attention keys and from `MaskedBatchNorm` stats |
 
-A non-attention model (`ResNet`, `MLP`, …) only needs the first job. Its
-forward sees `x` only; pad rows still produce a prediction, but that
-prediction is multiplied by `w = 0` in the loss. Grouped training works for
-those models without threading a mask through the net.
+A model without BatchNorm or attention (`NeuroTree`, `TabM`, …) only needs
+the first job. Its forward sees `x` only; pad rows still produce a prediction,
+but that prediction is multiplied by `w = 0` in the loss.
 
-An `*Attn` model also needs the second job. A pad token with value `0` would
-still be a key every query can attend to. Encoder BatchNorm is a reduction
-over the group: pad zeros would enter `μ` / `σ` and running stats. Those
-layers must see a valid-token flag.
+`MLP`, `ResNet` and the `*Attn` models also need the second job. A pad token
+with value `0` would still be a key every query can attend to. BatchNorm is a
+reduction over the group: pad zeros would enter `μ` / `σ` and running stats.
+Those layers must see a valid-token flag.
 
 ## Why embeddings do not take `w`
 
@@ -83,7 +82,7 @@ input is either x  or  (x, w)
 
 ```julia
 chain = if uses_batch_mask(core_chain)
-    MaskedModel(embed_chain, core_chain)   # MLPAttn, NeuroTreeAttn
+    MaskedModel(embed_chain, core_chain)   # MLP, ResNet, MLPAttn, NeuroTreeAttn
 else
     Chain(embed_chain, core_chain)          # everyone else
 end
@@ -113,7 +112,7 @@ not leak into real tokens downstream.
 
 `BatchNormEmbeddings` is the exception: it does reduce across the group, and
 today it does not see `w`. Prefer identity / linear / LN embeddings (or the
-model’s own `MaskedBatchNorm`) when training an `*Attn` model on grouped data.
+model’s own `MaskedBatchNorm`) when training on grouped data.
 
 ## End-to-end flow
 

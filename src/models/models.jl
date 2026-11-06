@@ -10,7 +10,7 @@ export NeuroTreeConfig, MLPConfig, MLPAttnConfig, NeuroTreeAttnConfig
 export ResNetConfig, TabMConfig, MOETreeConfig, ModernNCAConfig
 
 using ..Losses
-using Lux: Chain
+using Lux: Chain, BranchLayer
 using LuxCore: AbstractLuxContainerLayer
 using NNlib
 
@@ -57,6 +57,7 @@ override this.
 """
 uses_batch_mask(::Any) = false
 uses_batch_mask(c::Chain) = any(uses_batch_mask, c.layers)
+uses_batch_mask(b::BranchLayer) = any(uses_batch_mask, b.layers)
 
 """
     MaskedModel(embed, core)
@@ -154,6 +155,7 @@ end
 
 include("layers/layers.jl")
 using .Layers: MaskedBatchNorm, CarryMask, MaskSkip, GroupedDense, AttnResidual, ResidualScale
+uses_batch_mask(::MaskedBatchNorm) = true
 
 include("embeddings/embeddings.jl")
 using .Embeddings

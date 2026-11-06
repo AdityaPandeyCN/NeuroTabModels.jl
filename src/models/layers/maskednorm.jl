@@ -107,6 +107,6 @@ end
 
 (l::MaskedBatchNorm)(x::AbstractMatrix, ps, st) = _bn_apply(l, x, nothing, ps, st)
 function (l::MaskedBatchNorm)((x, valid)::Tuple, ps, st)
-    y, st_ = _bn_apply(l, x, valid, ps, st)
+    y, st_ = _bn_apply(l, x, _valid_tokens(vec(valid)), ps, st)
     return (y, valid), st_
 end
