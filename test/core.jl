@@ -343,6 +343,22 @@ end
     @test st_none.running_var == st_tr.running_var
 end
 
+@testset "MLP and ResNet ignore padded group rows" begin
+    nreal, npad = 5, 3
+    x = randn(Float32, 3, nreal)
+    xpad = hcat(x, zeros(Float32, 3, npad))
+    w = reshape(Float32[ones(nreal); zeros(npad)], 1, 1, :)
+    for arch in (NeuroTabModels.MLPConfig(; stack_size=2), NeuroTabModels.ResNetConfig())
+        core = arch(; ins=3, outsize=1)
+        @test NeuroTabModels.uses_batch_mask(core)
+        ps, st = Lux.setup(Random.Xoshiro(2), core)
+        y, st_real = core(x, ps, st)
+        y_pad, st_pad = core((xpad, w), ps, st)
+        @test y_pad[:, :, 1:nreal] ≈ y
+        @test core(x, ps, Lux.testmode(st_pad))[1] ≈ core(x, ps, Lux.testmode(st_real))[1]
+    end
+end
+
 @testset "AttnResidual multi-head attention" begin
     layer = NeuroTabModels.Models.AttnResidual(4, 2; identity_qk=true, attn_scale=1.0f0)
     ps, st = Lux.setup(Random.Xoshiro(123), layer)

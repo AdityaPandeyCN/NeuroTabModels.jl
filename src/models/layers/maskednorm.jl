@@ -50,8 +50,9 @@ struct MaskedBatchNorm{B<:BatchNorm} <: LuxCore.AbstractLuxWrapperLayer{:bn}
 end
 MaskedBatchNorm(chs::Int, act=identity; kwargs...) = MaskedBatchNorm(BatchNorm(chs, act; kwargs...))
 
+# Padding flags as `(1, tokens)` weights. Sample weights only scale the loss, so any `w > 0` counts once.
 function _token_w(valid, x::AbstractMatrix)
-    return reshape(eltype(x).(valid), 1, size(x, 2))
+    return reshape(eltype(x).(_valid_tokens(vec(valid))), 1, size(x, 2))
 end
 
 function _moments(x::AbstractMatrix, w::AbstractMatrix, n)
