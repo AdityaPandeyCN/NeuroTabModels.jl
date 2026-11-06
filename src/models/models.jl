@@ -91,7 +91,9 @@ function (m::MaskedModel)((x, w)::Tuple, ps, st)
 end
 
 import ..Losses: masked_input
-masked_input(::MaskedModel, x, w) = (x, w)
+# Only grouped loaders pad, and they shape `w` as `(1, 1, bs)`. A vector `w` is a sample
+# weight, which scales the loss but is not a mask.
+masked_input(::MaskedModel, x, w::AbstractArray{<:Any,3}) = (x, w)
 
 """
     train_dataloader(arch, m, default, df; kwargs...)

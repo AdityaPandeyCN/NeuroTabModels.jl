@@ -330,6 +330,13 @@ end
     (y2, _), _ = l((x_pad, valid), ps, st_tr)
     @test y2[:, 1:3] ≈ y1
 
+    y_lux, st_lux = Lux.BatchNorm(4)(x_real, ps, st_tr)
+    y1, st_real = l(x_real, ps, st_tr)
+    @test y1 == y_lux
+    (_, _), st_padded = l((x_pad, valid), ps, st_tr)
+    @test st_padded.running_mean ≈ st_real.running_mean ≈ st_lux.running_mean
+    @test st_padded.running_var ≈ st_real.running_var ≈ st_lux.running_var
+
     st_te = Lux.testmode(st)
     y1e, _ = l(x_real, ps, st_te)
     (y2e, _), _ = l((x_pad, valid), ps, st_te)

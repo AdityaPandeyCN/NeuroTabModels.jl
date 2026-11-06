@@ -192,10 +192,8 @@ mask and not a causal triangle.
 With no `group_name`, there are no pad slots. Every column is a real
 observation. `*Attn` models still accept a plain `x` (the unmasked method).
 `n_attn_layers=0` on `MLPAttn` is that encoder plus a linear head: a ResNet
-ablation, including `MaskedBatchNorm` with `valid = nothing`, which is
-ordinary BatchNorm.
+ablation, including `MaskedBatchNorm` on plain `x`, which is Lux's
+`BatchNorm`.
 
-If an ungrouped loader also carries sample weights, `*Attn` chains receive
-`(x, w)` because `masked_input(::MaskedModel, x, w) = (x, w)`. Zero weights
-are then treated as padded keys. Keep sample weights strictly positive; the grouped
-loader rejects non-positive or non-finite weights for this reason.
+If an ungrouped loader also carries sample weights, they only scale the loss:
+`masked_input` forwards `w` only in the grouped `(1, 1, buffer)` shape.
