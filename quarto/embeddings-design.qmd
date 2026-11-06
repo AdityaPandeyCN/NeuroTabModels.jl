@@ -72,14 +72,14 @@ function embed_point(layer, ps, st, xval)
 end
 
 function basis_grid(layer, ps, st, xvals, field::Symbol)
-    core, ps_c, st_c = layer[1], ps[1], st[1]
+    core, ps_c, st_c = layer.layer[1], ps[1], st[1]
     x = reshape(Float32.(collect(xvals)), 1, :)
     h, _ = getfield(core, field)(x, getfield(ps_c, field), getfield(st_c, field))
     return ndims(h) == 3 ? reshape(h, size(h, 1), size(h, 3)) : Array(h)
 end
 
 function temporal_basis(layer, ps, st, xvals)
-    temp = layer.layers.layer_2[2]
+    temp = layer.layers.layer_2[2].layer
     x = reshape(Float32.(collect(xvals)), 1, :)
     h, _ = temp.periodic(x, ps.layer_2.layer_2.periodic, st.layer_2.layer_2.periodic)
     return h

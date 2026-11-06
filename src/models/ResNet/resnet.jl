@@ -5,7 +5,8 @@ export ResNetConfig
 using Lux
 using LuxCore
 
-import ..Models: Architecture, get_activation, interleave_heads
+import ..Models: Architecture, get_activation, interleave_heads, MaskedBatchNorm, CarryMask
+import ..Layers: _untuple, _res_block
 
 """
     ResNetConfig(; kwargs...)
@@ -49,21 +50,12 @@ function ResNetConfig(; kwargs...)
     )
 end
 
-function _res_block(hsize::Int, act, dropout::Float64)
-    layers = Any[Dense(hsize => hsize), BatchNorm(hsize, act)]
-    dropout > 0 && push!(layers, Dropout(dropout))
-    push!(layers, Dense(hsize => hsize))
-    push!(layers, BatchNorm(hsize))
-
-    return Chain(SkipConnection(Chain(layers...), +), BatchNorm(hsize, act))
-end
-
 function _resnet_trunk(ins::Int, hsize::Int, outsize::Int, act, stack_size::Int, dropout::Float64)
-    layers = Any[Dense(ins => hsize), BatchNorm(hsize, act)]
+    layers = Any[CarryMask(Dense(ins => hsize)), MaskedBatchNorm(hsize, act)]
     for _ in 1:stack_size
         push!(layers, _res_block(hsize, act, dropout))
     end
-    push!(layers, Dense(hsize => outsize), ReshapeLayer((outsize, 1)))
+    push!(layers, WrappedFunction(_untuple), Dense(hsize => outsize), ReshapeLayer((outsize, 1)))
     return Chain(layers...)
 end
 
@@ -89,10 +81,10 @@ function (config::ResNetConfig)(; ins, outsize, kwargs...)
         iseven(outsize) || error("MLE_tree_split requires an even `outsize` (e.g., 2 for μ and σ). Got: $outsize")
         head_outsize = outsize ÷ 2
         chain = Chain(
-            Parallel(
-                interleave_heads,
+            BranchLayer(
                 _resnet_trunk(ins, hsize, head_outsize, act, config.stack_size, config.dropout),
-                _resnet_trunk(ins, hsize, head_outsize, act, config.stack_size, config.dropout),
+                _resnet_trunk(ins, hsize, head_outsize, act, config.stack_size, config.dropout);
+                fusion=interleave_heads,
             ),
         )
     else

@@ -1,4 +1,4 @@
-using NeuroTabModels.Models.Embeddings: EmbeddingLayer, LayerNormEmbeddings, BatchNormEmbeddings
+using NeuroTabModels.Models.Embeddings: EmbeddingLayer, LayerNormEmbeddings, BatchNormEmbeddings, TemporalEmbeddings
 using NeuroTabModels.Models.Embeddings: build_embedding_chain, embedding_width
 using NNlib
 
@@ -123,5 +123,23 @@ end
         peval = [argmax(x) for x in eachrow(m(deval))]
         @test mean(ptrain .== levelcode.(dtrain.class)) >= 0.95
         @test mean(peval .== levelcode.(deval.class)) >= 0.95
+    end
+end
+
+@testset "Padded groups do not reach BatchNorm statistics" begin
+    nreal, npad = 5, 3
+    x = vcat(randn(Float32, 2, nreal), Float32[1 2 3 4 5])
+    xpad = hcat(x, zeros(Float32, 3, npad))
+    w = reshape(Float32[ones(nreal); zeros(npad)], 1, 1, :)
+    config = EmbeddingLayer(; num=BatchNormEmbeddings(), temp=TemporalEmbeddings(; index=3, d_embedding=2))
+    embed = build_embedding_chain(config, 3; x_train=permutedims(x))
+    ins = embedding_width(embed, zeros(Float32, 3, 2), Xoshiro(1))
+    for arch in (NeuroTabModels.MLPConfig(; stack_size=2), NeuroTabModels.ResNetConfig())
+        m = NeuroTabModels.MaskedModel(embed, arch(; ins, outsize=1))
+        ps, st = Lux.setup(Xoshiro(2), m)
+        y, st_real = m(x, ps, st)
+        y_pad, st_pad = m((xpad, w), ps, st)
+        @test y_pad[:, :, 1:nreal] ≈ y
+        @test st_pad.embed.layer_1.layer_2.running_var ≈ st_real.embed.layer_1.layer_2.running_var
     end
 end

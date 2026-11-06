@@ -38,75 +38,68 @@ end
 
 BatchNorm over the last dimension of `(channels, tokens)`.
 
-When the input is `(x, valid)` with `valid` a per-token flag, mean/variance and
-running stats use only valid tokens so zero-padded group-buffer slots do not leak.
-Unmasked `x` is ordinary BatchNorm.
+Unmasked `x` is Lux's `BatchNorm`, so an ungrouped model trains exactly as with it. When the
+input is `(x, w)` from a padded group, mean/variance and running stats use only the tokens
+with `w > 0`, so zero-padded group-buffer slots do not leak.
 
 Dense / Dropout in the same chain should be wrapped in [`CarryMask`](@ref);
 residual skips should use [`MaskSkip`](@ref).
 """
-struct MaskedBatchNorm{F} <: LuxCore.AbstractLuxLayer
-    chs::Int
-    act::F
-    epsilon::Float32
-    momentum::Float32
+struct MaskedBatchNorm{B<:BatchNorm} <: LuxCore.AbstractLuxWrapperLayer{:bn}
+    bn::B
 end
-MaskedBatchNorm(chs::Int, act=identity; epsilon=1.0f-5, momentum=0.1f0) =
-    MaskedBatchNorm{typeof(act)}(chs, act, Float32(epsilon), Float32(momentum))
+MaskedBatchNorm(chs::Int, act=identity; kwargs...) = MaskedBatchNorm(BatchNorm(chs, act; kwargs...))
 
-function LuxCore.initialparameters(::AbstractRNG, l::MaskedBatchNorm)
-    return (; scale=ones(Float32, l.chs), bias=zeros(Float32, l.chs))
-end
-function LuxCore.initialstates(::AbstractRNG, l::MaskedBatchNorm)
-    return (; running_mean=zeros(Float32, l.chs), running_var=ones(Float32, l.chs), training=Val(true))
-end
-
+# Padding flags as `(1, tokens)` weights. Sample weights only scale the loss, so any `w > 0` counts once.
 function _token_w(valid, x::AbstractMatrix)
-    return reshape(eltype(x).(valid), 1, size(x, 2))
+    return reshape(eltype(x).(_valid_tokens(vec(valid))), 1, size(x, 2))
 end
 
-function _moments(x::AbstractMatrix, ::Nothing)
-    T = eltype(x)
-    μ = sum(x; dims=2) ./ T(size(x, 2))
-    σ² = sum((x .- μ) .^ 2; dims=2) ./ T(size(x, 2))
-    return μ, σ²
-end
-function _moments(x::AbstractMatrix, valid)
-    T = eltype(x)
-    w = _token_w(valid, x)
-    nw = max(sum(w), one(T))
-    μ = sum(x .* w; dims=2) ./ nw
-    σ² = sum(((x .- μ) .^ 2) .* w; dims=2) ./ nw
+function _moments(x::AbstractMatrix, w::AbstractMatrix, n)
+    μ = sum(x .* w; dims=2) ./ n
+    σ² = sum(((x .- μ) .^ 2) .* w; dims=2) ./ n
     return μ, σ²
 end
 
-# 1 if running stats should take this batch, else 0. Arithmetic (no `if` on
-# `any(valid)`) so Reactant can trace grouped / padded batches.
-_running_gate(::Nothing, ::Type{T}) where {T} = one(T)
-_running_gate(valid, ::Type{T}) where {T} = ifelse(any(valid), one(T), zero(T))
-
-function _bn_apply(l::MaskedBatchNorm, x::AbstractMatrix, valid, ps, st)
+function _bn_apply(bn::BatchNorm, x::AbstractMatrix, valid, ps, st)
     T = eltype(x)
-    ϵ = T(l.epsilon)
+    ϵ = T(bn.epsilon)
     γ = reshape(ps.scale, :, 1)
     β = reshape(ps.bias, :, 1)
     if _is_training(st)
-        μ, σ² = _moments(x, valid)
-        y = l.act.(γ .* (x .- μ) ./ sqrt.(σ² .+ ϵ) .+ β)
-        m = T(l.momentum)
-        u = _running_gate(valid, T)
-        rm = (1 - m * u) .* st.running_mean .+ (m * u) .* vec(μ)
-        rv = (1 - m * u) .* st.running_var .+ (m * u) .* vec(σ²)
+        w = _token_w(valid, x)
+        nvalid = sum(w)
+        n = max(nvalid, one(T))
+        μ, σ² = _moments(x, w, n)
+        y = bn.activation.(γ .* (x .- μ) ./ sqrt.(σ² .+ ϵ) .+ β)
+        # An all-pad batch leaves running stats alone; arithmetic (no `if`) so Reactant can trace it.
+        # Momentum and the n / (n - 1) variance correction follow LuxLib's batchnorm.
+        m = T(bn.momentum) * ifelse(nvalid > zero(T), one(T), zero(T))
+        rm = (1 - m) .* st.running_mean .+ m .* vec(μ)
+        rv = (1 - m) .* st.running_var .+ (m * n / max(n - 1, one(T))) .* vec(σ²)
         return y, (; running_mean=rm, running_var=rv, training=st.training)
     end
     μ = reshape(st.running_mean, :, 1)
     σ² = reshape(st.running_var, :, 1)
-    y = l.act.(γ .* (x .- μ) ./ sqrt.(σ² .+ ϵ) .+ β)
+    y = bn.activation.(γ .* (x .- μ) ./ sqrt.(σ² .+ ϵ) .+ β)
     return y, st
 end
 
-(l::MaskedBatchNorm)(x::AbstractMatrix, ps, st) = _bn_apply(l, x, nothing, ps, st)
+(l::MaskedBatchNorm)(x::AbstractMatrix, ps, st) = l.bn(x, ps, st)
 function (l::MaskedBatchNorm)((x, valid)::Tuple, ps, st)
-    y, st_ = _bn_apply(l, x, valid, ps, st)
+    y, st_ = _bn_apply(l.bn, x, valid, ps, st)
     return (y, valid), st_
+end
+
+"""
+    _res_block(hsize, act, dropout)
+
+ResNet residual block with masked BatchNorm so grouped pads can be ignored.
+"""
+function _res_block(hsize::Int, act, dropout::Float64)
+    layers = Any[CarryMask(Dense(hsize => hsize)), MaskedBatchNorm(hsize, act)]
+    dropout > 0 && push!(layers, CarryMask(Dropout(dropout)))
+    push!(layers, CarryMask(Dense(hsize => hsize)))
+    push!(layers, MaskedBatchNorm(hsize))
+    return Chain(MaskSkip(Chain(layers...)), MaskedBatchNorm(hsize, act))
 end
