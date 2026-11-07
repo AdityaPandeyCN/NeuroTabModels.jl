@@ -84,7 +84,6 @@ function _bn_apply(bn::BatchNorm, x::AbstractMatrix, valid, ps, st)
     return y, st
 end
 
-(l::MaskedBatchNorm)(x::AbstractMatrix, ps, st) = l.bn(x, ps, st)
 function (l::MaskedBatchNorm)((x, valid)::Tuple, ps, st)
     y, st_ = _bn_apply(l.bn, x, valid, ps, st)
     return (y, valid), st_
